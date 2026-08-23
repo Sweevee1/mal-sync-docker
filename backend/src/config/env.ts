@@ -1,0 +1,49 @@
+import { z } from "zod";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const envSchema = z.object({
+  PORT: z.coerce.number().int().positive().default(3000),
+  ENCRYPTION_KEY: z
+    .string()
+    .min(1, "ENCRYPTION_KEY is required (generate with: openssl rand -base64 32)")
+    .refine((val) => {
+      try {
+        return Buffer.from(val, "base64").length === 32;
+      } catch {
+        return false;
+      }
+    }, "ENCRYPTION_KEY must be a base64-encoded 32-byte key (generate with: openssl rand -base64 32)"),
+  MAL_CLIENT_ID: z.string().min(1, "MAL_CLIENT_ID is required"),
+  MAL_REDIRECT_URI: z.string().url(),
+  ANILIST_CLIENT_ID: z.string().min(1, "ANILIST_CLIENT_ID is required"),
+  ANILIST_CLIENT_SECRET: z.string().min(1, "ANILIST_CLIENT_SECRET is required"),
+  ANILIST_REDIRECT_URI: z.string().url(),
+  DEFAULT_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
+  DATABASE_URL: z.string().min(1),
+  // Only set to "true" if this app sits behind a reverse proxy that terminates
+  // HTTPS and sets X-Forwarded-Proto. Never enable this if the app's port is
+  // exposed directly -- a client could forge that header to fake HTTPS and
+  // unlock Kitsu password login over a genuinely plaintext connection.
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((v) => v === "true"),
+});
+
+function loadConfig() {
+  const parsed = envSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+      .join("\n");
+    // eslint-disable-next-line no-console
+    console.error(`Invalid environment configuration:\n${issues}`);
+    process.exit(1);
+  }
+  return parsed.data;
+}
+
+export const config = loadConfig();

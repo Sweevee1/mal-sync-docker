@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// One row per external service: "MAL" | "ANILIST" | "KITSU"
+model ServiceCredential {
+  id       Int    @id @default(autoincrement())
+  service  String @unique
+
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  tokenExpiresAt  DateTime?
+
+  // Kitsu only: stored so the password grant can be redone if refresh fails
+  kitsuUsernameEnc String?
+  kitsuPasswordEnc String?
+  kitsuUserId      String? // Kitsu's internal numeric user id, needed for library-entries lookups
+
+  // MAL only: needed for GET /users/{user_name}/animelist
+  malUsername String?
+
+  // Transient OAuth handshake state (MAL PKCE verifier / CSRF state for MAL+AniList)
+  codeVerifier String?
+  oauthState   String?
+
+  connectedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+}
+
+// Cache of resolved MAL ID -> AniList/Kitsu media ID, to avoid repeated lookups.
+// A non-null lookupAt with a null id is a cached negative (confirmed unmappable).
+model MediaMapping {
+  id        Int    @id @default(autoincrement())
+  malId     Int
+  mediaType String // "ANIME" | "MANGA"
+
+  anilistId       Int?
+  anilistLookupAt DateTime?
+
+  kitsuId       String?
+  kitsuLookupAt DateTime?
+
+  @@unique([malId, mediaType])
+}
+
+// Cached snapshot of MAL list state plus per-service sync status.
+model ListEntry {
+  id        Int    @id @default(autoincrement())
+  malId     Int
+  mediaType String // "ANIME" | "MANGA"
+  title     String
+
+  status          String
+  score           Int
+  progress        Int // episodes watched / chapters read
+  volumesProgress Int? // manga only
+  startDate       String?
+  finishDate      String?
+  malUpdatedAt    DateTime
+
+  anilistSyncStatus  String    @default("PENDING") // SYNCED | PENDING | SKIPPED_UNMAPPABLE | ERROR | PENDING_DELETION | NOT_APPLICABLE
+  anilistSyncedAt    DateTime?
+  anilistLastError   String?
+  anilistListEntryId String?
+
+  kitsuSyncStatus  String    @default("PENDING")
+  kitsuSyncedAt    DateTime?
+  kitsuLastError   String?
+  kitsuLibraryEntryId String?
+
+  @@unique([malId, mediaType])
+}
+
+model SyncRun {
+  id          Int       @id @default(autoincrement())
+  trigger     String // MANUAL | SCHEDULED
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  status      String    @default("RUNNING") // RUNNING | SUCCESS | PARTIAL_FAILURE | FAILED
+  animeCount  Int       @default(0)
+  mangaCount  Int       @default(0)
+  pushedCount Int       @default(0)
+  skippedCount Int      @default(0)
+  errorCount  Int       @default(0)
+  errorMessage String?
+
+  entries SyncRunEntry[]
+}
+
+model SyncRunEntry {
+  id        Int      @id @default(autoincrement())
+  syncRunId Int
+  syncRun   SyncRun  @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  malId     Int
+  mediaType String
+  title     String
+  service   String // ANILIST | KITSU
+  outcome   String // PUSHED | SKIPPED_UNMAPPABLE | SKIPPED_UNCHANGED | ERROR | DELETED
+  detail    String?
+  createdAt DateTime @default(now())
+}
+
+// Single-row settings table.
+model AppSetting {
+  id                  Int       @id @default(1)
+  syncIntervalMinutes Int       @default(60)
+  lastFullSyncAt      DateTime?
+}
