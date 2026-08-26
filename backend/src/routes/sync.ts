@@ -1,17 +1,30 @@
 import { Router } from "express";
 import { prisma } from "../db/client";
 import { runSync, isSyncRunning } from "../sync/engine";
+import { runCheck } from "../sync/checker";
 
 export const syncRouter = Router();
 
-syncRouter.post("/run", async (_req, res) => {
+syncRouter.post("/run", async (req, res) => {
   if (isSyncRunning()) {
     return res.status(409).json({ error: "A sync is already in progress" });
   }
+  const dryRun = req.body?.dryRun === true;
   // Fire and forget: the frontend polls /api/sync/status for progress.
-  runSync("MANUAL").catch((err) => {
+  runSync(dryRun ? "DRY_RUN" : "MANUAL").catch((err) => {
     // eslint-disable-next-line no-console
-    console.error("Manual sync failed:", err);
+    console.error(dryRun ? "Dry-run sync failed:" : "Manual sync failed:", err);
+  });
+  res.status(202).json({ ok: true, dryRun });
+});
+
+syncRouter.post("/check", async (_req, res) => {
+  if (isSyncRunning()) {
+    return res.status(409).json({ error: "A sync is already in progress" });
+  }
+  runCheck().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error("Check failed:", err);
   });
   res.status(202).json({ ok: true });
 });

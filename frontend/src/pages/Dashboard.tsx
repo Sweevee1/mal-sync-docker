@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { StatusResponse } from "../api/types";
 import ServiceStatusCard from "../components/ServiceStatusCard";
+import LiveSyncLog from "../components/LiveSyncLog";
 
 export default function Dashboard() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -35,10 +36,20 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [syncing, load]);
 
-  async function handleSyncNow() {
+  async function handleSyncNow(dryRun: boolean) {
     setError(null);
     try {
-      await api.triggerSync();
+      await api.triggerSync(dryRun);
+      setSyncing(true);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function handleCheck() {
+    setError(null);
+    try {
+      await api.triggerCheck();
       setSyncing(true);
     } catch (err: any) {
       setError(err.message);
@@ -106,19 +117,42 @@ export default function Dashboard() {
         <h2>Sync</h2>
         <p className="muted">
           {lastSync
-            ? `Last run #${lastSync.id} (${lastSync.trigger.toLowerCase()}) · ${lastSync.status} at ${new Date(
+            ? `Last run #${lastSync.id} (${lastSync.trigger.replace("_", " ").toLowerCase()}) · ${lastSync.status} at ${new Date(
                 lastSync.startedAt
               ).toLocaleString()}`
             : "No sync has run yet."}
         </p>
-        {lastSync && (
-          <p className="muted">
-            {lastSync.pushedCount} pushed · {lastSync.skippedCount} skipped · {lastSync.errorCount} errors
-          </p>
-        )}
-        <button onClick={handleSyncNow} disabled={syncing || !services.mal.connected}>
+        {lastSync &&
+          (lastSync.trigger === "DRY_RUN" ? (
+            <p className="muted">
+              <span className="badge badge-neutral">Dry run — nothing was pushed</span>{" "}
+              {lastSync.pushedCount} would push · {lastSync.skippedCount} skipped · {lastSync.errorCount} errors
+            </p>
+          ) : lastSync.trigger === "CHECK" ? (
+            <p className="muted">
+              <span className="badge badge-neutral">Check — read-only, nothing changed</span>{" "}
+              {lastSync.pushedCount} match · {lastSync.skippedCount} need attention · {lastSync.errorCount} errors
+            </p>
+          ) : (
+            <p className="muted">
+              {lastSync.pushedCount} pushed · {lastSync.skippedCount} skipped · {lastSync.errorCount} errors
+            </p>
+          ))}
+        <button onClick={() => handleSyncNow(false)} disabled={syncing || !services.mal.connected}>
           {syncing ? "Syncing..." : "Sync now"}
+        </button>{" "}
+        <button onClick={() => handleSyncNow(true)} disabled={syncing || !services.mal.connected}>
+          {syncing ? "Syncing..." : "Dry run"}
+        </button>{" "}
+        <button onClick={handleCheck} disabled={syncing || !services.mal.connected}>
+          {syncing ? "Syncing..." : "Check sync"}
         </button>
+        <p className="muted">Dry run tests MAL, AniList, and Kitsu connectivity for real, but never pushes changes.</p>
+        <p className="muted">
+          Check compares MAL against AniList/Kitsu's actual current entries and reports matches/mismatches; also
+          read-only, doesn't touch local sync status either.
+        </p>
+        {syncing && lastSync && <LiveSyncLog runId={lastSync.id} active={syncing} />}
       </section>
 
       <section className="card">

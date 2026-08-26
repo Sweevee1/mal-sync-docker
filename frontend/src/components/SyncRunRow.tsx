@@ -13,7 +13,7 @@ export default function SyncRunRow({ run, expanded, onToggle }: { run: SyncRun; 
       <td>
         #{run.id} {expanded ? "▾" : "▸"}
       </td>
-      <td>{run.trigger}</td>
+      <td>{run.trigger.replace("_", " ")}</td>
       <td>{new Date(run.startedAt).toLocaleString()}</td>
       <td>
         <span className={STATUS_CLASS[run.status]}>{run.status.replace("_", " ")}</span>

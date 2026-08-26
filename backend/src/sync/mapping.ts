@@ -50,3 +50,18 @@ export async function resolveKitsuId(
   });
   return kitsuId;
 }
+
+/**
+ * Clears a cached Kitsu mapping so the next attempt re-resolves it fresh.
+ * "Positive results trusted indefinitely" (see isFresh above) breaks if
+ * Kitsu later merges/removes/renumbers that specific entry; a push then
+ * fails with a "media must exist" relationship error forever, since the
+ * cache would otherwise keep handing back the same dead id. Called from the
+ * push path when it detects exactly that error.
+ */
+export async function invalidateKitsuMapping(malId: number, mediaType: MediaType): Promise<void> {
+  await prisma.mediaMapping.updateMany({
+    where: { malId, mediaType },
+    data: { kitsuId: null, kitsuLookupAt: null },
+  });
+}

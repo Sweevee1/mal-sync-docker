@@ -17,21 +17,23 @@ A self-hosted, one-way sync tool: **MyAnimeList is the source of truth** for you
    ```sh
    docker compose up --build
    ```
-4. Open `http://localhost:3000`, go to **Connect Services**, and connect MyAnimeList, AniList, and Kitsu.
+4. Open `http://localhost:3000`, go to **Connect Services**, and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; entirely done in the UI, no further `.env` editing needed).
 5. Click **Sync now**, or just wait for the scheduled interval (configurable on the Dashboard).
 
 ## Getting Your API Credentials
 
+MyAnimeList and AniList each require you to register a small OAuth app on their own site and give this app the resulting Client ID (and, for AniList, Client Secret). Both are entered on the **Connect Services** page in the UI, not `.env`, and the secret is encrypted at rest the same way tokens are.
+
 ### MyAnimeList
 1. Go to [myanimelist.net/apiconfig](https://myanimelist.net/apiconfig) and create a new client.
 2. App Type: `other`. No client secret is required; this app authenticates via PKCE.
-3. Set the redirect URI to match `MAL_REDIRECT_URI` in `.env` (default: `http://localhost:3000/api/auth/mal/callback`).
-4. Put the client ID in `MAL_CLIENT_ID`.
+3. The **Connect Services** page shows the exact redirect URI to register (based on the URL you're accessing the app from, e.g. `http://localhost:3000/api/auth/mal/callback`).
+4. Paste the client ID into the Client ID field on that page and save.
 
 ### AniList
 1. Go to [anilist.co/settings/developer](https://anilist.co/settings/developer) and create a new client.
-2. Set the redirect URI to match `ANILIST_REDIRECT_URI` in `.env` (default: `http://localhost:3000/api/auth/anilist/callback`).
-3. Put the client ID and secret in `ANILIST_CLIENT_ID` / `ANILIST_CLIENT_SECRET`.
+2. The **Connect Services** page shows the exact redirect URI to register (e.g. `http://localhost:3000/api/auth/anilist/callback`).
+3. Paste the client ID and secret into the fields on that page and save.
 4. Before connecting, set your AniList account's scoring format to **Point (10)** at [anilist.co/settings](https://anilist.co/settings). This app pushes MAL's 0-10 scores through as-is, without converting between scoring formats.
 
 ### Kitsu

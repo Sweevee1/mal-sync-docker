@@ -11,6 +11,7 @@ export interface ServiceStatus {
   connected: boolean;
   connectedAt: string | null;
   expired: boolean;
+  clientConfigured: boolean;
 }
 
 export interface StatusResponse {
@@ -23,11 +24,12 @@ export interface StatusResponse {
   syncIntervalMinutes: number;
   lastSync: SyncRun | null;
   isSecure: boolean;
+  oauthCallbackBase: string;
 }
 
 export interface SyncRun {
   id: number;
-  trigger: "MANUAL" | "SCHEDULED";
+  trigger: "MANUAL" | "SCHEDULED" | "DRY_RUN" | "CHECK";
   startedAt: string;
   finishedAt: string | null;
   status: "RUNNING" | "SUCCESS" | "PARTIAL_FAILURE" | "FAILED";
@@ -45,7 +47,17 @@ export interface SyncRunEntry {
   mediaType: MediaType;
   title: string;
   service: "ANILIST" | "KITSU";
-  outcome: "PUSHED" | "SKIPPED_UNMAPPABLE" | "SKIPPED_UNCHANGED" | "ERROR" | "DELETED";
+  outcome:
+    | "PUSHED"
+    | "WOULD_PUSH"
+    | "ALREADY_SYNCED"
+    | "MATCH"
+    | "MISMATCH"
+    | "MISSING"
+    | "SKIPPED_UNMAPPABLE"
+    | "SKIPPED_UNCHANGED"
+    | "ERROR"
+    | "DELETED";
   detail: string | null;
   createdAt: string;
 }

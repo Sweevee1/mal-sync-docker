@@ -5,9 +5,38 @@ import * as kitsu from "../services/kitsu";
 
 export const authRouter = Router();
 
-authRouter.get("/mal/start", async (_req, res) => {
-  const url = await mal.startAuth();
-  res.redirect(url);
+function callbackUrl(req: import("express").Request, path: string): string {
+  return `${req.protocol}://${req.get("host")}${path}`;
+}
+
+authRouter.put("/mal/client", async (req, res) => {
+  const { clientId } = req.body ?? {};
+  if (!clientId || typeof clientId !== "string" || !clientId.trim()) {
+    return res.status(400).json({ error: "clientId is required" });
+  }
+  await mal.setClientId(clientId.trim());
+  res.json({ ok: true });
+});
+
+authRouter.put("/anilist/client", async (req, res) => {
+  const { clientId, clientSecret } = req.body ?? {};
+  if (!clientId || typeof clientId !== "string" || !clientId.trim()) {
+    return res.status(400).json({ error: "clientId is required" });
+  }
+  if (!clientSecret || typeof clientSecret !== "string" || !clientSecret.trim()) {
+    return res.status(400).json({ error: "clientSecret is required" });
+  }
+  await anilist.setClientCredentials(clientId.trim(), clientSecret.trim());
+  res.json({ ok: true });
+});
+
+authRouter.get("/mal/start", async (req, res) => {
+  try {
+    const url = await mal.startAuth(callbackUrl(req, "/api/auth/mal/callback"));
+    res.redirect(url);
+  } catch (err: any) {
+    res.redirect(`/?error=${encodeURIComponent(err?.message ?? "MAL connection failed")}`);
+  }
 });
 
 authRouter.get("/mal/callback", async (req, res) => {
@@ -20,9 +49,13 @@ authRouter.get("/mal/callback", async (req, res) => {
   }
 });
 
-authRouter.get("/anilist/start", async (_req, res) => {
-  const url = await anilist.startAuth();
-  res.redirect(url);
+authRouter.get("/anilist/start", async (req, res) => {
+  try {
+    const url = await anilist.startAuth(callbackUrl(req, "/api/auth/anilist/callback"));
+    res.redirect(url);
+  } catch (err: any) {
+    res.redirect(`/?error=${encodeURIComponent(err?.message ?? "AniList connection failed")}`);
+  }
 });
 
 authRouter.get("/anilist/callback", async (req, res) => {

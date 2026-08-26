@@ -2,7 +2,6 @@ import axios from "axios";
 import crypto from "node:crypto";
 import { GraphQLClient, gql } from "graphql-request";
 import { prisma } from "../db/client";
-import { config } from "../config/env";
 import { decrypt, encrypt } from "../crypto/secretBox";
 import { anilistLimiter } from "./rateLimiter";
 import { RateLimitError } from "../types";
@@ -12,17 +11,34 @@ const AUTHORIZE_URL = "https://anilist.co/api/v2/oauth/authorize";
 const TOKEN_URL = "https://anilist.co/api/v2/oauth/token";
 const GRAPHQL_URL = "https://graphql.anilist.co";
 
-export async function startAuth(): Promise<string> {
-  const state = crypto.randomBytes(16).toString("hex");
+export async function getClientId(): Promise<string | null> {
+  const cred = await prisma.serviceCredential.findUnique({ where: { service: "ANILIST" } });
+  return cred?.clientId ?? null;
+}
+
+export async function setClientCredentials(clientId: string, clientSecret: string): Promise<void> {
   await prisma.serviceCredential.upsert({
     where: { service: "ANILIST" },
-    create: { service: "ANILIST", oauthState: state },
-    update: { oauthState: state },
+    create: { service: "ANILIST", clientId, clientSecretEnc: encrypt(clientSecret) },
+    update: { clientId, clientSecretEnc: encrypt(clientSecret) },
+  });
+}
+
+export async function startAuth(redirectUri: string): Promise<string> {
+  const cred = await prisma.serviceCredential.findUnique({ where: { service: "ANILIST" } });
+  if (!cred?.clientId || !cred.clientSecretEnc) {
+    throw new Error("Set your AniList Client ID and Secret on the Connect Services page first");
+  }
+
+  const state = crypto.randomBytes(16).toString("hex");
+  await prisma.serviceCredential.update({
+    where: { service: "ANILIST" },
+    data: { oauthState: state, redirectUri },
   });
 
   const url = new URL(AUTHORIZE_URL);
-  url.searchParams.set("client_id", config.ANILIST_CLIENT_ID);
-  url.searchParams.set("redirect_uri", config.ANILIST_REDIRECT_URI);
+  url.searchParams.set("client_id", cred.clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", state);
   return url.toString();
@@ -30,7 +46,7 @@ export async function startAuth(): Promise<string> {
 
 export async function handleCallback(code: string, state: string): Promise<void> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "ANILIST" } });
-  if (!cred || cred.oauthState !== state) {
+  if (!cred || !cred.clientId || !cred.clientSecretEnc || !cred.redirectUri || cred.oauthState !== state) {
     throw new Error("Invalid or expired AniList OAuth state");
   }
 
@@ -38,9 +54,9 @@ export async function handleCallback(code: string, state: string): Promise<void>
     TOKEN_URL,
     {
       grant_type: "authorization_code",
-      client_id: config.ANILIST_CLIENT_ID,
-      client_secret: config.ANILIST_CLIENT_SECRET,
-      redirect_uri: config.ANILIST_REDIRECT_URI,
+      client_id: cred.clientId,
+      client_secret: decrypt(cred.clientSecretEnc),
+      redirect_uri: cred.redirectUri,
       code,
     },
     { headers: { "Content-Type": "application/json", Accept: "application/json" } }
@@ -58,6 +74,7 @@ export async function handleCallback(code: string, state: string): Promise<void>
       accessTokenEnc: encrypt(access_token),
       tokenExpiresAt,
       oauthState: null,
+      redirectUri: null,
       connectedAt: new Date(),
     },
   });
@@ -79,8 +96,19 @@ export async function isConnected(): Promise<boolean> {
   return !!cred?.accessTokenEnc;
 }
 
+// Clears the connection but keeps the saved Client ID/Secret, so reconnecting
+// doesn't require re-entering them.
 export async function disconnect(): Promise<void> {
-  await prisma.serviceCredential.deleteMany({ where: { service: "ANILIST" } });
+  await prisma.serviceCredential.updateMany({
+    where: { service: "ANILIST" },
+    data: {
+      accessTokenEnc: null,
+      tokenExpiresAt: null,
+      connectedAt: null,
+      oauthState: null,
+      redirectUri: null,
+    },
+  });
 }
 
 async function graphqlRequest<T>(query: string, variables: Record<string, unknown>, accessToken?: string): Promise<T> {
@@ -109,6 +137,38 @@ const LOOKUP_QUERY = gql`
     }
   }
 `;
+
+const ENTRY_QUERY = gql`
+  query ($mediaId: Int) {
+    Media(id: $mediaId) {
+      mediaListEntry {
+        id
+        status
+        score(format: POINT_10)
+        progress
+        progressVolumes
+      }
+    }
+  }
+`;
+
+/**
+ * Reads the authenticated user's current list entry for an AniList media id,
+ * without writing anything; used both by the read-only "Check" mode and by
+ * the push path (to skip writing when the remote already matches MAL).
+ * Returns null if the media isn't on the user's list at all.
+ */
+export async function getListEntry(
+  accessToken: string,
+  anilistMediaId: number
+): Promise<{ id: number; status: string; score: number; progress: number; progressVolumes: number | null } | null> {
+  const data = await graphqlRequest<{
+    Media: {
+      mediaListEntry: { id: number; status: string; score: number; progress: number; progressVolumes: number | null } | null;
+    };
+  }>(ENTRY_QUERY, { mediaId: anilistMediaId }, accessToken);
+  return data.Media?.mediaListEntry ?? null;
+}
 
 /** Resolves a MAL ID to an AniList media ID. Returns null if no match exists. */
 export async function lookupByMalId(malId: number, mediaType: MediaType): Promise<number | null> {

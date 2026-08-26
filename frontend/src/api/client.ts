@@ -25,8 +25,14 @@ export const api = {
     }),
   disconnectService: (service: "MAL" | "ANILIST" | "KITSU") =>
     request<{ ok: true }>(`/auth/${service}`, { method: "DELETE" }),
+  setMalClient: (clientId: string) =>
+    request<{ ok: true }>("/auth/mal/client", { method: "PUT", body: JSON.stringify({ clientId }) }),
+  setAnilistClient: (clientId: string, clientSecret: string) =>
+    request<{ ok: true }>("/auth/anilist/client", { method: "PUT", body: JSON.stringify({ clientId, clientSecret }) }),
 
-  triggerSync: () => request<{ ok: true }>("/sync/run", { method: "POST" }),
+  triggerSync: (dryRun = false) =>
+    request<{ ok: true; dryRun: boolean }>("/sync/run", { method: "POST", body: JSON.stringify({ dryRun }) }),
+  triggerCheck: () => request<{ ok: true }>("/sync/check", { method: "POST" }),
   getSyncStatus: () => request<{ running: boolean; latest: SyncRun | null }>("/sync/status"),
   getSyncHistory: () => request<{ runs: SyncRun[] }>("/sync/history"),
   getSyncRunDetail: (id: number) => request<{ run: SyncRun & { entries: SyncRunEntry[] } }>(`/sync/history/${id}`),

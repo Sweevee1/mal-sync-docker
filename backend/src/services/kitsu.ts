@@ -182,8 +182,12 @@ export async function lookupByMalId(accessToken: string, malId: number, mediaTyp
       },
     });
     const included = res.data.included as Array<{ id: string; type: string }> | undefined;
-    if (!included || included.length === 0) return null;
-    return included[0].id;
+    // Kitsu's own mapping data can include a miscategorized item (e.g. a
+    // character resource) alongside the correct one for the same MAL id --
+    // only trust an included item whose type actually matches what we asked
+    // for, not just whichever one happened to come back first.
+    const match = included?.find((item) => item.type === resource);
+    return match?.id ?? null;
   });
 }
 
@@ -196,6 +200,10 @@ const STATUS_MAP: Record<MalListEntry["status"], string> = {
   plan_to_watch: "planned",
   plan_to_read: "planned",
 };
+
+export function mapStatus(malStatus: MalListEntry["status"]): string {
+  return STATUS_MAP[malStatus];
+}
 
 async function findExistingLibraryEntryId(
   accessToken: string,
@@ -212,6 +220,33 @@ async function findExistingLibraryEntryId(
   });
   const data = res.data.data as Array<{ id: string }>;
   return data[0]?.id ?? null;
+}
+
+/**
+ * Reads the current library entry's status/progress/rating for a Kitsu media
+ * id, without writing anything; used both by the read-only "Check" mode and
+ * by the push path (to skip writing when the remote already matches MAL).
+ * Returns null if the media isn't on the user's list.
+ */
+export async function getLibraryEntry(
+  accessToken: string,
+  kitsuUserId: string,
+  kitsuMediaId: string,
+  mediaType: MediaType
+): Promise<{ id: string; status: string; progress: number; ratingTwenty: number | null } | null> {
+  const resource = KITSU_RESOURCE[mediaType];
+  return kitsuLimiter.schedule(async () => {
+    const res = await client(accessToken).get("/library-entries", {
+      params: {
+        "filter[userId]": kitsuUserId,
+        [`filter[${resource}Id]`]: kitsuMediaId,
+      },
+    });
+    const data = res.data.data as Array<{ id: string; attributes: { status: string; progress: number; ratingTwenty: number | null } }>;
+    if (!data[0]) return null;
+    const { status, progress, ratingTwenty } = data[0].attributes;
+    return { id: data[0].id, status, progress, ratingTwenty: ratingTwenty ?? null };
+  });
 }
 
 /**

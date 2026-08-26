@@ -1,7 +1,6 @@
 import axios from "axios";
 import crypto from "node:crypto";
 import { prisma } from "../db/client";
-import { config } from "../config/env";
 import { decrypt, encrypt } from "../crypto/secretBox";
 import { malLimiter } from "./rateLimiter";
 import type { MalListEntry, MediaType } from "../types";
@@ -16,40 +15,57 @@ export function generatePkcePair(): { codeVerifier: string; codeChallenge: strin
   return { codeVerifier, codeChallenge: codeVerifier };
 }
 
-export async function startAuth(): Promise<string> {
+export async function getClientId(): Promise<string | null> {
+  const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
+  return cred?.clientId ?? null;
+}
+
+export async function setClientId(clientId: string): Promise<void> {
+  await prisma.serviceCredential.upsert({
+    where: { service: "MAL" },
+    create: { service: "MAL", clientId },
+    update: { clientId },
+  });
+}
+
+export async function startAuth(redirectUri: string): Promise<string> {
+  const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
+  if (!cred?.clientId) {
+    throw new Error("Set your MAL Client ID on the Connect Services page first");
+  }
+
   const { codeVerifier, codeChallenge } = generatePkcePair();
   const state = crypto.randomBytes(16).toString("hex");
 
-  await prisma.serviceCredential.upsert({
+  await prisma.serviceCredential.update({
     where: { service: "MAL" },
-    create: { service: "MAL", codeVerifier, oauthState: state },
-    update: { codeVerifier, oauthState: state },
+    data: { codeVerifier, oauthState: state, redirectUri },
   });
 
   const url = new URL(AUTHORIZE_URL);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", config.MAL_CLIENT_ID);
+  url.searchParams.set("client_id", cred.clientId);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "plain");
   url.searchParams.set("state", state);
-  url.searchParams.set("redirect_uri", config.MAL_REDIRECT_URI);
+  url.searchParams.set("redirect_uri", redirectUri);
   return url.toString();
 }
 
 export async function handleCallback(code: string, state: string): Promise<void> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
-  if (!cred || !cred.codeVerifier || cred.oauthState !== state) {
+  if (!cred || !cred.clientId || !cred.codeVerifier || !cred.redirectUri || cred.oauthState !== state) {
     throw new Error("Invalid or expired MAL OAuth state");
   }
 
   const tokenRes = await axios.post(
     TOKEN_URL,
     new URLSearchParams({
-      client_id: config.MAL_CLIENT_ID,
+      client_id: cred.clientId,
       grant_type: "authorization_code",
       code,
       code_verifier: cred.codeVerifier,
-      redirect_uri: config.MAL_REDIRECT_URI,
+      redirect_uri: cred.redirectUri,
     }),
     { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
   );
@@ -70,17 +86,21 @@ export async function handleCallback(code: string, state: string): Promise<void>
       malUsername: meRes.data.name,
       codeVerifier: null,
       oauthState: null,
+      redirectUri: null,
       connectedAt: new Date(),
     },
   });
 }
 
-async function refreshAccessToken(refreshTokenEnc: string): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date }> {
+async function refreshAccessToken(
+  clientId: string,
+  refreshTokenEnc: string
+): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date }> {
   const refreshToken = decrypt(refreshTokenEnc);
   const res = await axios.post(
     TOKEN_URL,
     new URLSearchParams({
-      client_id: config.MAL_CLIENT_ID,
+      client_id: clientId,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
     }),
@@ -105,7 +125,7 @@ const EXPIRY_SAFETY_MARGIN_MS = 5 * 60 * 1000;
 
 export async function getValidAccessToken(): Promise<{ accessToken: string; username: string }> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
-  if (!cred || !cred.accessTokenEnc || !cred.refreshTokenEnc || !cred.malUsername) {
+  if (!cred || !cred.accessTokenEnc || !cred.refreshTokenEnc || !cred.malUsername || !cred.clientId) {
     throw new Error("MAL is not connected");
   }
 
@@ -113,7 +133,7 @@ export async function getValidAccessToken(): Promise<{ accessToken: string; user
     return { accessToken: decrypt(cred.accessTokenEnc), username: cred.malUsername };
   }
 
-  const refreshed = await refreshAccessToken(cred.refreshTokenEnc);
+  const refreshed = await refreshAccessToken(cred.clientId, cred.refreshTokenEnc);
   return { accessToken: refreshed.accessToken, username: cred.malUsername };
 }
 
@@ -122,8 +142,22 @@ export async function isConnected(): Promise<boolean> {
   return !!cred?.accessTokenEnc;
 }
 
+// Clears the connection but keeps the saved Client ID, so reconnecting doesn't
+// require re-entering it.
 export async function disconnect(): Promise<void> {
-  await prisma.serviceCredential.deleteMany({ where: { service: "MAL" } });
+  await prisma.serviceCredential.updateMany({
+    where: { service: "MAL" },
+    data: {
+      accessTokenEnc: null,
+      refreshTokenEnc: null,
+      tokenExpiresAt: null,
+      malUsername: null,
+      connectedAt: null,
+      codeVerifier: null,
+      oauthState: null,
+      redirectUri: null,
+    },
+  });
 }
 
 interface MalListNode {

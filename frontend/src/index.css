@@ -226,6 +226,10 @@ button.secondary {
   max-width: 360px;
 }
 
+.section-action {
+  margin-top: 12px;
+}
+
 .stacked-form label {
   display: flex;
   flex-direction: column;
@@ -303,4 +307,25 @@ code {
   font-size: 0.8rem;
   overflow-x: auto;
   white-space: pre;
+}
+
+.log-viewer {
+  margin-top: 12px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.log-line {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.log-line:last-child {
+  border-bottom: none;
 }

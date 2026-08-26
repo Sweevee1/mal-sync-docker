@@ -24,9 +24,18 @@ model ServiceCredential {
   // MAL only: needed for GET /users/{user_name}/animelist
   malUsername String?
 
-  // Transient OAuth handshake state (MAL PKCE verifier / CSRF state for MAL+AniList)
+  // MAL + AniList: the registered OAuth app's own client id/secret, entered via
+  // the Connect Services UI instead of environment variables. MAL's PKCE "other"
+  // app type has no secret, so clientSecretEnc is AniList-only.
+  clientId        String?
+  clientSecretEnc String?
+
+  // Transient OAuth handshake state (MAL PKCE verifier / CSRF state for MAL+AniList).
+  // redirectUri is computed from the request host at /start time and stored here
+  // so /callback reuses the exact same value rather than re-deriving it.
   codeVerifier String?
   oauthState   String?
+  redirectUri  String?
 
   connectedAt DateTime?
   updatedAt   DateTime  @updatedAt

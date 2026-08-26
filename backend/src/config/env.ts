@@ -15,11 +15,8 @@ const envSchema = z.object({
         return false;
       }
     }, "ENCRYPTION_KEY must be a base64-encoded 32-byte key (generate with: openssl rand -base64 32)"),
-  MAL_CLIENT_ID: z.string().min(1, "MAL_CLIENT_ID is required"),
-  MAL_REDIRECT_URI: z.string().url(),
-  ANILIST_CLIENT_ID: z.string().min(1, "ANILIST_CLIENT_ID is required"),
-  ANILIST_CLIENT_SECRET: z.string().min(1, "ANILIST_CLIENT_SECRET is required"),
-  ANILIST_REDIRECT_URI: z.string().url(),
+  // MAL/AniList OAuth client id+secret are entered via the Connect Services UI
+  // and stored in ServiceCredential, not configured here; see routes/auth.ts.
   DEFAULT_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
   DATABASE_URL: z.string().min(1),
   // Only set to "true" if this app sits behind a reverse proxy that terminates

@@ -32,10 +32,15 @@ export type SyncEntryStatus =
   | "PENDING_DELETION"
   | "NOT_APPLICABLE";
 
-export type SyncRunTrigger = "MANUAL" | "SCHEDULED";
+export type SyncRunTrigger = "MANUAL" | "SCHEDULED" | "DRY_RUN" | "CHECK";
 export type SyncRunStatus = "RUNNING" | "SUCCESS" | "PARTIAL_FAILURE" | "FAILED";
 export type SyncRunEntryOutcome =
   | "PUSHED"
+  | "WOULD_PUSH"
+  | "ALREADY_SYNCED"
+  | "MATCH"
+  | "MISMATCH"
+  | "MISSING"
   | "SKIPPED_UNMAPPABLE"
   | "SKIPPED_UNCHANGED"
   | "ERROR"
