@@ -44,23 +44,36 @@ export async function startAuth(redirectUri: string): Promise<string> {
   return url.toString();
 }
 
+// AniList's OAuth server returns a JSON body describing what actually went
+// wrong, but axios's own thrown error only says "Request failed with status
+// code 401/400" — pull the real reason out so it's shown to the user instead.
+function extractOAuthErrorMessage(err: any): string {
+  const data = err?.response?.data;
+  return data?.message ?? data?.hint ?? data?.error_description ?? data?.error ?? err?.message ?? String(err);
+}
+
 export async function handleCallback(code: string, state: string): Promise<void> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "ANILIST" } });
   if (!cred || !cred.clientId || !cred.clientSecretEnc || !cred.redirectUri || cred.oauthState !== state) {
     throw new Error("Invalid or expired AniList OAuth state");
   }
 
-  const tokenRes = await axios.post(
-    TOKEN_URL,
-    {
-      grant_type: "authorization_code",
-      client_id: cred.clientId,
-      client_secret: decrypt(cred.clientSecretEnc),
-      redirect_uri: cred.redirectUri,
-      code,
-    },
-    { headers: { "Content-Type": "application/json", Accept: "application/json" } }
-  );
+  let tokenRes;
+  try {
+    tokenRes = await axios.post(
+      TOKEN_URL,
+      {
+        grant_type: "authorization_code",
+        client_id: cred.clientId,
+        client_secret: decrypt(cred.clientSecretEnc),
+        redirect_uri: cred.redirectUri,
+        code,
+      },
+      { headers: { "Content-Type": "application/json", Accept: "application/json" } }
+    );
+  } catch (err: any) {
+    throw new Error(`AniList token exchange failed: ${extractOAuthErrorMessage(err)}`);
+  }
 
   // Note: AniList does not issue refresh tokens for the authorization-code
   // grant. Access tokens are long-lived (~1 year); re-authorization via the

@@ -52,23 +52,37 @@ export async function startAuth(redirectUri: string): Promise<string> {
   return url.toString();
 }
 
+// MAL's OAuth server returns a JSON body describing what actually went wrong
+// (e.g. {"error":"invalid_client","message":"Client authentication failed"}),
+// but axios's own thrown error only says "Request failed with status code
+// 401/400" — pull the real reason out so it's shown to the user instead.
+function extractOAuthErrorMessage(err: any): string {
+  const data = err?.response?.data;
+  return data?.message ?? data?.hint ?? data?.error_description ?? data?.error ?? err?.message ?? String(err);
+}
+
 export async function handleCallback(code: string, state: string): Promise<void> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
   if (!cred || !cred.clientId || !cred.codeVerifier || !cred.redirectUri || cred.oauthState !== state) {
     throw new Error("Invalid or expired MAL OAuth state");
   }
 
-  const tokenRes = await axios.post(
-    TOKEN_URL,
-    new URLSearchParams({
-      client_id: cred.clientId,
-      grant_type: "authorization_code",
-      code,
-      code_verifier: cred.codeVerifier,
-      redirect_uri: cred.redirectUri,
-    }),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-  );
+  let tokenRes;
+  try {
+    tokenRes = await axios.post(
+      TOKEN_URL,
+      new URLSearchParams({
+        client_id: cred.clientId,
+        grant_type: "authorization_code",
+        code,
+        code_verifier: cred.codeVerifier,
+        redirect_uri: cred.redirectUri,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+  } catch (err: any) {
+    throw new Error(`MAL token exchange failed: ${extractOAuthErrorMessage(err)}`);
+  }
 
   const { access_token, refresh_token, expires_in } = tokenRes.data;
   const tokenExpiresAt = new Date(Date.now() + expires_in * 1000);
