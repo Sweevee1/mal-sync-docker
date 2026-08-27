@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { StatusResponse } from "../api/types";
+import ServiceIcon from "../components/ServiceIcon";
 
-const KITSU_CURL = `curl -X POST https://kitsu.io/api/oauth/token \\
+function buildKitsuCurl(username: string, password: string) {
+  return `curl -X POST https://kitsu.io/api/oauth/token \\
   -d grant_type=password \\
-  -d username=YOUR_KITSU_USERNAME \\
-  -d password=YOUR_KITSU_PASSWORD`;
+  -d username=${username.trim() || "YOUR_KITSU_USERNAME"} \\
+  -d password=${password || "YOUR_KITSU_PASSWORD"}`;
+}
 
 const MAL_APP_DESCRIPTION = "Self-hosted tool that syncs your MyAnimeList lists to AniList and Kitsu.";
-const MAL_HOMEPAGE_URL = "http://localhost:3000";
 const ANILIST_APP_NAME = "MAL-Sync-Docker";
 
 export default function Onboarding() {
@@ -73,6 +75,9 @@ export default function Onboarding() {
   const [kitsuStatus, setKitsuStatus] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [kitsuCliUsername, setKitsuCliUsername] = useState("");
+  const [kitsuCliPassword, setKitsuCliPassword] = useState("");
+
   const [kitsuAccessToken, setKitsuAccessToken] = useState("");
   const [kitsuRefreshToken, setKitsuRefreshToken] = useState("");
   const [kitsuExpiresIn, setKitsuExpiresIn] = useState("");
@@ -81,6 +86,7 @@ export default function Onboarding() {
 
   async function handleKitsuSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!status?.isSecure) return;
     setSubmitting(true);
     setKitsuStatus(null);
     try {
@@ -122,26 +128,27 @@ export default function Onboarding() {
     <div>
       <h1>Connect Services</h1>
       <p className="muted">
-        MyAnimeList is the source of truth. Once connected, its anime and manga lists are pushed to AniList and
-        Kitsu on your configured schedule (or whenever you hit "Sync now").
+        Once MyAnimeList is connected, its anime and manga lists are pushed to AniList and
+        Kitsu on your configured schedule (or whenever you press "Sync now").
       </p>
 
       <section className="card">
-        <h2>1. MyAnimeList</h2>
+        <h2>
+          <ServiceIcon service="mal" /> MyAnimeList
+        </h2>
         <p>
           Register a client at{" "}
           <a href="https://myanimelist.net/apiconfig" target="_blank" rel="noreferrer">
             myanimelist.net/apiconfig
           </a>
-          . Choose App Type "other": no client secret is needed, since this app uses the PKCE flow. Copy these
-          straight into the form:
+          . Choose App Type "other".
         </p>
         <p className="muted">App Redirect URL</p>
         <pre className="code-block">{malCallback}</pre>
         <p className="muted">App Description</p>
         <pre className="code-block">{MAL_APP_DESCRIPTION}</pre>
         <p className="muted">Homepage URL</p>
-        <pre className="code-block">{MAL_HOMEPAGE_URL}</pre>
+        <pre className="code-block">{status.oauthCallbackBase}</pre>
         {status.services.mal.clientConfigured ? (
           <>
             <p className="muted">Client ID saved.</p>
@@ -180,13 +187,15 @@ export default function Onboarding() {
       </section>
 
       <section className="card">
-        <h2>2. AniList</h2>
+        <h2>
+          <ServiceIcon service="anilist" /> AniList
+        </h2>
         <p>
           Register an app at{" "}
           <a href="https://anilist.co/settings/developer" target="_blank" rel="noreferrer">
             anilist.co/settings/developer
           </a>
-          . Copy these straight into the form:
+          .
         </p>
         <p className="muted">Name</p>
         <pre className="code-block">{ANILIST_APP_NAME}</pre>
@@ -258,46 +267,51 @@ export default function Onboarding() {
       </section>
 
       <section className="card">
-        <h2>3. Kitsu</h2>
+        <h2>
+          <ServiceIcon service="kitsu" /> Kitsu
+        </h2>
         <p>No app registration is needed for Kitsu.</p>
 
         <div className="tab-bar">
-          {isSecure && (
-            <button
-              type="button"
-              className={kitsuTab === "password" ? "tab active" : "tab"}
-              onClick={() => setKitsuTab("password")}
-            >
-              Username &amp; password
-            </button>
-          )}
           <button
             type="button"
             className={kitsuTab === "token" ? "tab active" : "tab"}
             onClick={() => setKitsuTab("token")}
           >
-            Paste a token
+            Local login
+          </button>
+          <button
+            type="button"
+            className={kitsuTab === "password" ? "tab active" : "tab"}
+            onClick={() => setKitsuTab("password")}
+          >
+            Password (HTTPS)
           </button>
         </div>
 
-        {!isSecure && (
-          <p className="muted">
-            Password login is unavailable on this connection because it isn't HTTPS, so it would send your Kitsu
-            password in the clear. Use the token method below, or put this app behind an HTTPS reverse proxy and
-            set <code>TRUST_PROXY=true</code> to unlock password login.
-          </p>
-        )}
-
-        {kitsuTab === "password" && isSecure ? (
+        {kitsuTab === "password" ? (
           <>
-            <p className="muted">
-              Your password is sent directly to this server and used once to obtain a Kitsu API token. It's
-              encrypted at rest and only used again automatically if that token needs to be refreshed.
-            </p>
+            {isSecure ? (
+              <p className="muted">
+                Your password is sent directly to this server and used once to obtain a Kitsu API token. It's
+                encrypted at rest and only used again automatically if that token needs to be refreshed.
+              </p>
+            ) : (
+              <p className="muted">
+                Unavailable on this connection: it isn't HTTPS, so submitting here would send your password in the
+                clear. Use Local login instead, or put this app behind an HTTPS reverse proxy and set{" "}
+                <code>TRUST_PROXY=true</code>.
+              </p>
+            )}
             <form className="stacked-form" onSubmit={handleKitsuSubmit}>
               <label>
                 Username or email
-                <input value={kitsuUsername} onChange={(e) => setKitsuUsername(e.target.value)} required />
+                <input
+                  value={kitsuUsername}
+                  onChange={(e) => setKitsuUsername(e.target.value)}
+                  disabled={!isSecure}
+                  required
+                />
               </label>
               <label>
                 Password
@@ -305,10 +319,11 @@ export default function Onboarding() {
                   type="password"
                   value={kitsuPassword}
                   onChange={(e) => setKitsuPassword(e.target.value)}
+                  disabled={!isSecure}
                   required
                 />
               </label>
-              <button type="submit" disabled={submitting}>
+              <button type="submit" disabled={!isSecure || submitting}>
                 {submitting ? "Connecting..." : "Connect Kitsu"}
               </button>
             </form>
@@ -316,11 +331,26 @@ export default function Onboarding() {
           </>
         ) : (
           <>
+            <p className="muted">Your username and password below only fill in the command's placeholders.</p>
+            <div className="stacked-form">
+              <label>
+                Kitsu username or email
+                <input value={kitsuCliUsername} onChange={(e) => setKitsuCliUsername(e.target.value)} />
+              </label>
+              <label>
+                Kitsu password
+                <input
+                  type="password"
+                  value={kitsuCliPassword}
+                  onChange={(e) => setKitsuCliPassword(e.target.value)}
+                />
+              </label>
+            </div>
             <p className="muted">
               Run this yourself, from your own machine, against Kitsu's real HTTPS endpoint, so your password never
               reaches this server at all:
             </p>
-            <pre className="code-block">{KITSU_CURL}</pre>
+            <pre className="code-block">{buildKitsuCurl(kitsuCliUsername, kitsuCliPassword)}</pre>
             <p className="muted">
               The response is JSON with <code>access_token</code>, <code>refresh_token</code>, and{" "}
               <code>expires_in</code> (seconds). Paste them below. If you provide a refresh token, this app can

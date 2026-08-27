@@ -86,7 +86,11 @@ export default function LiveSyncLog({ runId, active }: { runId: number; active: 
   return (
     <div className="log-viewer" ref={logRef}>
       {entries.length === 0 ? (
-        <p className="muted">Fetching lists and resolving mappings... entries will appear here as they're processed.</p>
+        <p className="muted">
+          {active
+            ? "Fetching lists and resolving mappings... entries will appear here as they're processed."
+            : "This run finished before processing any entries."}
+        </p>
       ) : (
         entries.map((e) => {
           const malEntry = malEntries.get(entryKey(e.malId, e.mediaType));

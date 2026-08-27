@@ -8,14 +8,14 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="app-title">MAL-Sync</div>
+        <div className="app-title">MAL-Sync Docker</div>
         <nav className="app-nav">
           <NavLink to="/" end>
             Dashboard
           </NavLink>
           <NavLink to="/library">Library</NavLink>
           <NavLink to="/history">History</NavLink>
-          <NavLink to="/onboarding">Connect Services</NavLink>
+          <NavLink to="/settings">Connect Services</NavLink>
         </nav>
       </header>
       <main className="app-main">
@@ -23,7 +23,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/library" element={<Library />} />
           <Route path="/history" element={<SyncHistory />} />
-          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/settings" element={<Onboarding />} />
         </Routes>
       </main>
     </div>
