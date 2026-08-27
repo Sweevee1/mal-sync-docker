@@ -22,7 +22,7 @@ A pre-built image is published to GHCR on every push: `ghcr.io/sweevee1/mal-sync
 4. Add these as **Variables**:
    | Variable | Value |
    |---|---|
-   | `ENCRYPTION_KEY` | the value generated in step 1 |
+   | `ENCRYPTION_KEY` | **Required.** The value generated in step 1 — or run `openssl rand -base64 32` in Unraid's Terminal right now if you skipped that. |
    | `PORT` | `3000` (optional) |
    | `DEFAULT_SYNC_INTERVAL_MINUTES` | `60` (optional) |
    | `TRUST_PROXY` | `false` (optional) — only set `true` if a reverse proxy sits in front (see [`TRUST_PROXY`](#trust_proxy) below) |
