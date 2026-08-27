@@ -17,6 +17,10 @@ A self-hosted, one-way sync tool: **MyAnimeList is the source of truth** for you
    ```sh
    docker compose up --build
    ```
+   A prebuilt image is also published on every push to `master` at
+   `ghcr.io/sweevee1/mal-sync-docker:latest`, if you'd rather pull than build (e.g. adding
+   it directly as a container in Unraid's Docker tab: port `3000`, a volume mapped to
+   `/app/data`, and the same env vars as `.env.example`).
 4. Open `http://localhost:3000`, go to **Connect Services**, and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; entirely done in the UI, no further `.env` editing needed).
 5. Click **Sync now**, or just wait for the scheduled interval (configurable on the Dashboard).
 
