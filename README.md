@@ -2,27 +2,40 @@
 
 A self-hosted, one-way sync tool: **MyAnimeList is the source of truth** for your anime and manga lists, and changes get pushed out to AniList and Kitsu on a schedule and on demand. No browser, no site-detection, just API-to-API syncing.
 
-## Quickstart
+## Quickstart (Unraid)
 
-1. Copy the env template and fill it in (see [Getting Your API Credentials](#getting-your-api-credentials) below):
-   ```sh
-   cp .env.example .env
-   ```
-2. Generate an encryption key for stored credentials:
+A prebuilt image is published on every push to `master` at `ghcr.io/sweevee1/mal-sync-docker:latest` — no build step needed on the NAS.
+
+1. Generate an encryption key for stored credentials. Open Unraid's built-in web **Terminal** (the `>_` icon, top-right of any page) and run:
    ```sh
    openssl rand -base64 32
    ```
-   Put the output in `ENCRYPTION_KEY` in `.env`.
-3. Start the app:
-   ```sh
-   docker compose up --build
-   ```
-   A prebuilt image is also published on every push to `master` at
-   `ghcr.io/sweevee1/mal-sync-docker:latest`, if you'd rather pull than build (e.g. adding
-   it directly as a container in Unraid's Docker tab: port `3000`, a volume mapped to
-   `/app/data`, and the same env vars as `.env.example`).
-4. Open `http://localhost:3000`, go to **Connect Services**, and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; entirely done in the UI, no further `.env` editing needed).
-5. Click **Sync now**, or just wait for the scheduled interval (configurable on the Dashboard).
+   Copy the output; you'll paste it into a container variable below.
+2. Go to **Docker → Add Container** (bottom of the Docker tab). Fill in:
+   - **Repository**: `ghcr.io/sweevee1/mal-sync-docker:latest`
+   - **Network Type**: `Bridge`
+   - **Port**: Container Port `3000` → Host Port `3000` (or any free host port)
+   - **Path**: Container Path `/app/data` → Host Path e.g. `/mnt/user/appdata/mal-sync-docker` (this is where the SQLite database lives; see [Data & backups](#data--backups))
+   - **Variable**: `ENCRYPTION_KEY` = the value generated in step 1
+   - **Variable** (optional): `PORT` = `3000`
+   - **Variable** (optional): `DEFAULT_SYNC_INTERVAL_MINUTES` = `60`
+   - **Variable** (optional): `TRUST_PROXY` = `false` — leave this unless you're putting a reverse proxy in front (see [`TRUST_PROXY`](#trust_proxy) below)
+3. Click **Apply**. Unraid pulls the image and starts the container.
+4. Open `http://<UNRAID-IP>:3000` (your server's actual LAN IP or hostname, not `localhost` — the app reads the redirect/homepage URLs it shows you from whatever address you access it with, so this needs to be the address you'll actually use). Go to **Connect Services** and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; entirely done in the UI, no env editing needed).
+5. Click **Sync now** on the Dashboard, or just wait for the scheduled interval.
+
+If the package shows as private in GitHub, Unraid's anonymous pull will fail with a 403 — either make the package public (`https://github.com/users/Sweevee1/packages/container/mal-sync-docker/settings`) or add registry credentials to the container template.
+
+### Other Docker hosts
+
+Not on Unraid? Clone the repo and use `docker compose`:
+
+```sh
+cp .env.example .env      # fill in ENCRYPTION_KEY as above
+docker compose up --build
+```
+
+Then open `http://localhost:3000` and continue from step 4 above.
 
 ## Getting Your API Credentials
 
@@ -74,4 +87,4 @@ npm run prisma:migrate
 
 ## Data & backups
 
-All state (credentials, cached list data, sync history) lives in a single SQLite file inside the `malsync-data` Docker volume at `/app/data/malsync.db`. Back that volume up if you want to preserve sync history and avoid re-authenticating after a rebuild.
+All state (credentials, cached list data, sync history) lives in a single SQLite file at `/app/data/malsync.db` inside the container — the Unraid path mapping from step 2 above, or the `malsync-data` Docker volume if you're using `docker compose`. Back that path up if you want to preserve sync history and avoid re-authenticating after a rebuild.
