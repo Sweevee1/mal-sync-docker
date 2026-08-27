@@ -2,40 +2,52 @@
 
 A self-hosted, one-way sync tool: **MyAnimeList is the source of truth** for your anime and manga lists, and changes get pushed out to AniList and Kitsu on a schedule and on demand. No browser, no site-detection, just API-to-API syncing.
 
-## Quickstart (Unraid)
+## Installing on Unraid
 
-A prebuilt image is published on every push to `master` at `ghcr.io/sweevee1/mal-sync-docker:latest` — no build step needed on the NAS.
+A pre-built image is published to GHCR on every push: `ghcr.io/sweevee1/mal-sync-docker:latest`.
 
-1. Generate an encryption key for stored credentials. Open Unraid's built-in web **Terminal** (the `>_` icon, top-right of any page) and run:
+1. Generate an encryption key for stored credentials — open Unraid's built-in web **Terminal** (the `>_` icon, top-right of any page) and run:
    ```sh
    openssl rand -base64 32
    ```
-   Copy the output; you'll paste it into a container variable below.
-2. Go to **Docker → Add Container** (bottom of the Docker tab). Fill in:
-   - **Repository**: `ghcr.io/sweevee1/mal-sync-docker:latest`
-   - **Network Type**: `Bridge`
-   - **Port**: Container Port `3000` → Host Port `3000` (or any free host port)
-   - **Path**: Container Path `/app/data` → Host Path e.g. `/mnt/user/appdata/mal-sync-docker` (this is where the SQLite database lives; see [Data & backups](#data--backups))
-   - **Variable**: `ENCRYPTION_KEY` = the value generated in step 1
-   - **Variable** (optional): `PORT` = `3000`
-   - **Variable** (optional): `DEFAULT_SYNC_INTERVAL_MINUTES` = `60`
-   - **Variable** (optional): `TRUST_PROXY` = `false` — leave this unless you're putting a reverse proxy in front (see [`TRUST_PROXY`](#trust_proxy) below)
-3. Click **Apply**. Unraid pulls the image and starts the container.
-4. Open `http://<UNRAID-IP>:3000` (your server's actual LAN IP or hostname, not `localhost` — the app reads the redirect/homepage URLs it shows you from whatever address you access it with, so this needs to be the address you'll actually use). Go to **Connect Services** and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; entirely done in the UI, no env editing needed).
-5. Click **Sync now** on the Dashboard, or just wait for the scheduled interval.
+2. In the Unraid **Docker** tab, click **Add Container**.
+3. Fill in:
+   | Field | Value |
+   |---|---|
+   | Name | `mal-sync-docker` |
+   | Repository | `ghcr.io/sweevee1/mal-sync-docker:latest` |
+   | Network Type | `Bridge` |
+   | Port | Container `3000` → Host `3000` (or any free host port) |
+   | Path | Container `/app/data` → Host `/mnt/user/appdata/mal-sync-docker` |
+4. Add these as **Variables**:
+   | Variable | Value |
+   |---|---|
+   | `ENCRYPTION_KEY` | the value generated in step 1 |
+   | `PORT` | `3000` (optional) |
+   | `DEFAULT_SYNC_INTERVAL_MINUTES` | `60` (optional) |
+   | `TRUST_PROXY` | `false` (optional) — only set `true` if a reverse proxy sits in front (see [`TRUST_PROXY`](#trust_proxy) below) |
+5. Apply, then open `http://<your-unraid-ip>:3000` (your server's actual LAN IP, not `localhost` — the app reads the redirect/homepage URLs it shows you from whatever address you access it with). Go to **Connect Services** and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; entirely done in the UI, no env editing needed).
+6. Click **Sync now** on the Dashboard, or just wait for the scheduled interval.
 
-If the package shows as private in GitHub, Unraid's anonymous pull will fail with a 403 — either make the package public (`https://github.com/users/Sweevee1/packages/container/mal-sync-docker/settings`) or add registry credentials to the container template.
+The SQLite database lives at `/mnt/user/appdata/mal-sync-docker/malsync.db` on the host, so it survives container updates/recreation.
 
-### Other Docker hosts
+If `ghcr.io/sweevee1/mal-sync-docker:latest` fails to pull with a permission/authentication error, the GHCR package may still be private — no login is needed once it's public (this is a one-time setting on the GitHub side, not something you need to change).
 
-Not on Unraid? Clone the repo and use `docker compose`:
+## Installing anywhere else with Docker Compose
 
 ```sh
-cp .env.example .env      # fill in ENCRYPTION_KEY as above
+git clone https://github.com/Sweevee1/mal-sync-docker.git
+cd mal-sync-docker
+cp .env.example .env
+```
+
+Fill in `.env` (see the table above for what each value means), then:
+
+```sh
 docker compose up --build
 ```
 
-Then open `http://localhost:3000` and continue from step 4 above.
+Then open `http://localhost:3000` and continue from step 5 above.
 
 ## Getting Your API Credentials
 
@@ -87,4 +99,4 @@ npm run prisma:migrate
 
 ## Data & backups
 
-All state (credentials, cached list data, sync history) lives in a single SQLite file at `/app/data/malsync.db` inside the container — the Unraid path mapping from step 2 above, or the `malsync-data` Docker volume if you're using `docker compose`. Back that path up if you want to preserve sync history and avoid re-authenticating after a rebuild.
+All state (credentials, cached list data, sync history) lives in a single SQLite file at `/app/data/malsync.db` inside the container — the Unraid path mapping above, or the `malsync-data` Docker volume if you're using `docker compose`. Back that path up if you want to preserve sync history and avoid re-authenticating after a rebuild.
