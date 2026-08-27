@@ -19,6 +19,11 @@ RUN npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Fixed path inside the image's data volume; same for every Docker deployment
+# (compose, Unraid, plain `docker run`), so it's a baked-in default rather than
+# something every user has to remember to set. An explicit -e/env_file
+# DATABASE_URL still overrides this if ever needed.
+ENV DATABASE_URL=file:/app/data/malsync.db
 
 COPY backend/package.json backend/package-lock.json* ./
 RUN npm install --omit=dev
