@@ -164,8 +164,8 @@ jobs:
           done
           [ "$body" = '{"ok":true}' ] || { echo "health endpoint never became ready"; exit 1; }
 
-          procs=$(docker top "$NAME" -eo uid,comm)
-          node_uid=$(echo "$procs" | awk '$2=="node"{print $1; exit}')
+          procs=$(docker top "$NAME" -eo pid,uid,comm)
+          node_uid=$(echo "$procs" | awk '$3=="node"{print $2; exit}')
           [ "$node_uid" = "99" ] || { echo "node runs as uid '$node_uid', expected 99"; echo "$procs"; exit 1; }
 
           owner=$(stat -c '%u:%g %a' "$DATA")
