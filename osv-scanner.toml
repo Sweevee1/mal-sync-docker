@@ -4,5 +4,5 @@
 # Revisit by the date below.
 [[IgnoredVulns]]
 id = "GHSA-mrhx-c7xc-m3w5"
-ignoreUntil = 2027-03-01
+effectiveUntil = 2027-03-01
 reason = "zod 3 used only for startup env parsing; fix requires zod 4 migration"
