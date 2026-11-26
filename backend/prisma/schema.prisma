@@ -31,10 +31,11 @@ model ServiceCredential {
   clientSecretEnc String?
 
   // Transient OAuth handshake state (MAL PKCE verifier / CSRF state for MAL+AniList).
-  // redirectUri is computed from the request host at /start time and stored here
+  // redirectUri is built from PUBLIC_BASE_URL at /start time and stored here
   // so /callback reuses the exact same value rather than re-deriving it.
   codeVerifier String?
-  oauthState   String?
+  oauthState   String? // sha256 hex of the state sent to the provider
+  oauthStateExpiresAt DateTime?
   redirectUri  String?
 
   connectedAt DateTime?
@@ -119,4 +120,14 @@ model AppSetting {
   id                  Int       @id @default(1)
   syncIntervalMinutes Int       @default(60)
   lastFullSyncAt      DateTime?
+  // sha256 of ADMIN_PASSWORD_HASH; a change invalidates all sessions at startup.
+  adminHashFingerprint String?
+}
+
+// Owner login sessions. Only the sha256 of the cookie token is stored.
+model Session {
+  idHash     String   @id
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
 }

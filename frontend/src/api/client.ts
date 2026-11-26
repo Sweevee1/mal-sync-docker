@@ -1,19 +1,59 @@
 import type { ListEntry, StatusResponse, SyncRun, SyncRunEntry } from "./types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
+export const UNAUTHORIZED_EVENT = "msd:unauthorized";
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public retryAfterSeconds?: number
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", "X-MSD-Request": "1", ...init.headers },
+    });
+  } catch {
+    throw new ApiError(0, "Could not reach the server. Check that it is running.");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Request failed: ${res.status}`);
+    const retryAfter = Number.parseInt(res.headers.get("Retry-After") ?? "", 10);
+    // The session endpoints answer 401 for ordinary reasons (wrong password, not signed in yet).
+    if (res.status === 401 && !path.startsWith("/session")) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
+    throw new ApiError(
+      res.status,
+      body.error ?? `The server returned an error (HTTP ${res.status}).`,
+      Number.isFinite(retryAfter) ? retryAfter : undefined
+    );
   }
   if (res.status === 204 || res.status === 202) return undefined as T;
   return res.json();
 }
 
 export const api = {
+  getSession: async (): Promise<boolean> => {
+    try {
+      await request<{ authenticated: boolean }>("/session");
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return false;
+      throw err;
+    }
+  },
+  login: (password: string) =>
+    request<{ authenticated: true }>("/session/login", { method: "POST", body: JSON.stringify({ password }) }),
+  logout: () => request<{ ok: true }>("/session/logout", { method: "POST" }),
+
   getStatus: () => request<StatusResponse>("/status"),
 
   connectKitsu: (username: string, password: string) =>

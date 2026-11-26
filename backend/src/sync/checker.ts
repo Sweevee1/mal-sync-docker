@@ -5,7 +5,8 @@ import * as kitsu from "../services/kitsu";
 import { upsertListEntry } from "./diff";
 import { resolveAnilistId, resolveKitsuId } from "./mapping";
 import { tryAcquire, release } from "./lock";
-import { toSummary, extractErrorMessage } from "./engine";
+import { toSummary } from "./engine";
+import { safeErrorMessage } from "../http/errors";
 import { diffAnilist, diffKitsu } from "./compare";
 import type { MediaType, SyncRunSummary, TargetService } from "../types";
 import type { ListEntry } from "@prisma/client";
@@ -102,7 +103,7 @@ export async function runCheck(): Promise<SyncRunSummary> {
         }
       } catch (err: any) {
         errorCount++;
-        await logEntry(run.id, entry, "ANILIST", "ERROR", extractErrorMessage(err));
+        await logEntry(run.id, entry, "ANILIST", "ERROR", safeErrorMessage(err));
       }
 
       try {
@@ -114,7 +115,7 @@ export async function runCheck(): Promise<SyncRunSummary> {
         }
       } catch (err: any) {
         errorCount++;
-        await logEntry(run.id, entry, "KITSU", "ERROR", extractErrorMessage(err));
+        await logEntry(run.id, entry, "KITSU", "ERROR", safeErrorMessage(err));
       }
     }
 
@@ -133,7 +134,7 @@ export async function runCheck(): Promise<SyncRunSummary> {
     });
     return toSummary(finished);
   } catch (err: any) {
-    const message = err?.message ?? String(err);
+    const message = safeErrorMessage(err);
     const finished = await prisma.syncRun.update({
       where: { id: run.id },
       data: {

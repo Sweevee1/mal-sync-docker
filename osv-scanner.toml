@@ -1,0 +1,8 @@
+# zod 3 only parses env vars at startup here (config/env.ts); input is never
+# attacker-controlled, so the oversized-collection memory advisory is not
+# reachable. The fix exists only in zod 4, which needs a code migration.
+# Revisit by the date below.
+[[IgnoredVulns]]
+id = "GHSA-mrhx-c7xc-m3w5"
+ignoreUntil = 2027-03-01
+reason = "zod 3 used only for startup env parsing; fix requires zod 4 migration"

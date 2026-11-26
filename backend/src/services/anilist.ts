@@ -1,10 +1,10 @@
 import axios from "axios";
-import crypto from "node:crypto";
 import { GraphQLClient, gql } from "graphql-request";
 import { prisma } from "../db/client";
 import { decrypt, encrypt } from "../crypto/secretBox";
 import { anilistLimiter } from "./rateLimiter";
 import { RateLimitError } from "../types";
+import { OAuthStateError, assertStateMatches, clearOAuthState, newOAuthState } from "../auth/oauthState";
 import type { MalListEntry, MediaType } from "../types";
 
 const AUTHORIZE_URL = "https://anilist.co/api/v2/oauth/authorize";
@@ -24,16 +24,16 @@ export async function setClientCredentials(clientId: string, clientSecret: strin
   });
 }
 
-export async function startAuth(redirectUri: string): Promise<string> {
+export async function startAuth(redirectUri: string): Promise<{ url: string; state: string }> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "ANILIST" } });
   if (!cred?.clientId || !cred.clientSecretEnc) {
     throw new Error("Set your AniList Client ID and Secret on the Connect Services page first");
   }
 
-  const state = crypto.randomBytes(16).toString("hex");
+  const { state, stateHash, expiresAt } = newOAuthState();
   await prisma.serviceCredential.update({
     where: { service: "ANILIST" },
-    data: { oauthState: state, redirectUri },
+    data: { oauthState: stateHash, oauthStateExpiresAt: expiresAt, redirectUri },
   });
 
   const url = new URL(AUTHORIZE_URL);
@@ -41,12 +41,12 @@ export async function startAuth(redirectUri: string): Promise<string> {
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", state);
-  return url.toString();
+  return { url: url.toString(), state };
 }
 
 // AniList's OAuth server returns a JSON body describing what actually went
 // wrong, but axios's own thrown error only says "Request failed with status
-// code 401/400" — pull the real reason out so it's shown to the user instead.
+// code 401/400"; pull the real reason out so it's shown to the user instead.
 function extractOAuthErrorMessage(err: any): string {
   const data = err?.response?.data;
   return data?.message ?? data?.hint ?? data?.error_description ?? data?.error ?? err?.message ?? String(err);
@@ -54,8 +54,12 @@ function extractOAuthErrorMessage(err: any): string {
 
 export async function handleCallback(code: string, state: string): Promise<void> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "ANILIST" } });
-  if (!cred || !cred.clientId || !cred.clientSecretEnc || !cred.redirectUri || cred.oauthState !== state) {
-    throw new Error("Invalid or expired AniList OAuth state");
+  if (!cred) throw new OAuthStateError("Invalid or expired AniList OAuth state");
+  // Single-use: spent before the exchange so a replay can never reach it.
+  await clearOAuthState("ANILIST");
+  assertStateMatches(cred, state);
+  if (!cred.clientId || !cred.clientSecretEnc || !cred.redirectUri) {
+    throw new OAuthStateError("Invalid or expired AniList OAuth state");
   }
 
   let tokenRes;
@@ -87,6 +91,7 @@ export async function handleCallback(code: string, state: string): Promise<void>
       accessTokenEnc: encrypt(access_token),
       tokenExpiresAt,
       oauthState: null,
+      oauthStateExpiresAt: null,
       redirectUri: null,
       connectedAt: new Date(),
     },
@@ -119,6 +124,7 @@ export async function disconnect(): Promise<void> {
       tokenExpiresAt: null,
       connectedAt: null,
       oauthState: null,
+      oauthStateExpiresAt: null,
       redirectUri: null,
     },
   });

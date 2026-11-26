@@ -4,6 +4,7 @@ import { prisma } from "../db/client";
 import { decrypt, encrypt } from "../crypto/secretBox";
 import { malLimiter } from "./rateLimiter";
 import type { MalListEntry, MediaType } from "../types";
+import { OAuthStateError, assertStateMatches, clearOAuthState, newOAuthState } from "../auth/oauthState";
 
 const AUTHORIZE_URL = "https://myanimelist.net/v1/oauth2/authorize";
 const TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
@@ -28,18 +29,18 @@ export async function setClientId(clientId: string): Promise<void> {
   });
 }
 
-export async function startAuth(redirectUri: string): Promise<string> {
+export async function startAuth(redirectUri: string): Promise<{ url: string; state: string }> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
   if (!cred?.clientId) {
     throw new Error("Set your MAL Client ID on the Connect Services page first");
   }
 
   const { codeVerifier, codeChallenge } = generatePkcePair();
-  const state = crypto.randomBytes(16).toString("hex");
+  const { state, stateHash, expiresAt } = newOAuthState();
 
   await prisma.serviceCredential.update({
     where: { service: "MAL" },
-    data: { codeVerifier, oauthState: state, redirectUri },
+    data: { codeVerifier, oauthState: stateHash, oauthStateExpiresAt: expiresAt, redirectUri },
   });
 
   const url = new URL(AUTHORIZE_URL);
@@ -49,13 +50,13 @@ export async function startAuth(redirectUri: string): Promise<string> {
   url.searchParams.set("code_challenge_method", "plain");
   url.searchParams.set("state", state);
   url.searchParams.set("redirect_uri", redirectUri);
-  return url.toString();
+  return { url: url.toString(), state };
 }
 
 // MAL's OAuth server returns a JSON body describing what actually went wrong
 // (e.g. {"error":"invalid_client","message":"Client authentication failed"}),
 // but axios's own thrown error only says "Request failed with status code
-// 401/400" — pull the real reason out so it's shown to the user instead.
+// 401/400"; pull the real reason out so it's shown to the user instead.
 function extractOAuthErrorMessage(err: any): string {
   const data = err?.response?.data;
   return data?.message ?? data?.hint ?? data?.error_description ?? data?.error ?? err?.message ?? String(err);
@@ -63,8 +64,12 @@ function extractOAuthErrorMessage(err: any): string {
 
 export async function handleCallback(code: string, state: string): Promise<void> {
   const cred = await prisma.serviceCredential.findUnique({ where: { service: "MAL" } });
-  if (!cred || !cred.clientId || !cred.codeVerifier || !cred.redirectUri || cred.oauthState !== state) {
-    throw new Error("Invalid or expired MAL OAuth state");
+  if (!cred) throw new OAuthStateError("Invalid or expired MAL OAuth state");
+  // Single-use: spent before the exchange so a replay can never reach it.
+  await clearOAuthState("MAL");
+  assertStateMatches(cred, state);
+  if (!cred.clientId || !cred.codeVerifier || !cred.redirectUri) {
+    throw new OAuthStateError("Invalid or expired MAL OAuth state");
   }
 
   let tokenRes;
@@ -100,6 +105,7 @@ export async function handleCallback(code: string, state: string): Promise<void>
       malUsername: meRes.data.name,
       codeVerifier: null,
       oauthState: null,
+      oauthStateExpiresAt: null,
       redirectUri: null,
       connectedAt: new Date(),
     },
@@ -169,6 +175,7 @@ export async function disconnect(): Promise<void> {
       connectedAt: null,
       codeVerifier: null,
       oauthState: null,
+      oauthStateExpiresAt: null,
       redirectUri: null,
     },
   });
@@ -231,7 +238,12 @@ export async function fetchList(mediaType: MediaType, stopBefore: string | null)
       });
     }
 
-    url = res.data.paging?.next ?? null;
+    // The bearer token is re-sent on every page, so a poisoned next link must not leave MAL's API origin.
+    const next = res.data.paging?.next ?? null;
+    if (next && new URL(next).origin !== "https://api.myanimelist.net") {
+      throw new Error("Unexpected pagination URL from MAL");
+    }
+    url = next;
   }
 
   return results;

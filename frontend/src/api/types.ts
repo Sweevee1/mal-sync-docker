@@ -12,6 +12,7 @@ export interface ServiceStatus {
   connectedAt: string | null;
   expired: boolean;
   clientConfigured: boolean;
+  lastAuthError?: string | null;
 }
 
 export interface StatusResponse {

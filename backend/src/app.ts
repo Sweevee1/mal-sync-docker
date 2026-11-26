@@ -2,26 +2,50 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config/env";
-import { authRouter } from "./routes/auth";
+import type { Config } from "./config/env";
+import { createAuthRouters } from "./routes/auth";
 import { syncRouter } from "./routes/sync";
 import { entriesRouter } from "./routes/entries";
 import { settingsRouter } from "./routes/settings";
 import { statusRouter } from "./routes/status";
+import { createSessionRouter } from "./routes/session";
+import { createCsrfGuard } from "./auth/csrf";
+import { createRequireSession } from "./auth/session";
+import { applyErrorHandler, applySecurityMiddleware } from "./http/hardening";
 
-export function createApp() {
+// Overrides exist so tests can build apps with different proxy/base-URL
+// settings in one process; production always calls createApp() with none.
+export function createApp(overrides: Partial<Config> = {}) {
+  const cfg: Config = { ...config, ...overrides };
+  const { authRouter, authCallbackRouter } = createAuthRouters(cfg);
   const app = express();
-  // Only honor X-Forwarded-Proto (and therefore req.secure) when the operator
+  // Only honor X-Forwarded-* (and therefore req.secure) when the operator
   // has explicitly confirmed a reverse proxy sits in front. See config/env.ts.
-  if (config.TRUST_PROXY) {
-    app.set("trust proxy", 1);
+  if (cfg.TRUST_PROXY) {
+    app.set("trust proxy", cfg.TRUST_PROXY_CIDRS);
   }
-  app.use(express.json());
+  applySecurityMiddleware(app);
+
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  // Only guards non-GET/HEAD/OPTIONS, so it sits before the public session
+  // routes (login/logout must be guarded too) and the GET-only OAuth callbacks.
+  app.use("/api", createCsrfGuard(cfg));
+  app.use("/api/session", createSessionRouter(cfg));
+  app.use("/api/auth", authCallbackRouter);
+
+  app.use("/api", createRequireSession(cfg));
 
   app.use("/api/auth", authRouter);
   app.use("/api/sync", syncRouter);
   app.use("/api/entries", entriesRouter);
   app.use("/api/settings", settingsRouter);
   app.use("/api/status", statusRouter);
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Not found" });
+  });
 
   const publicDir = path.join(__dirname, "..", "public");
   const indexHtml = path.join(publicDir, "index.html");
@@ -42,5 +66,6 @@ export function createApp() {
     }
   });
 
+  applyErrorHandler(app);
   return app;
 }

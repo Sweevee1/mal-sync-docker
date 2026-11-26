@@ -6,6 +6,7 @@ import { upsertListEntry, detectRemovals, needsAttempt } from "./diff";
 import { resolveAnilistId, resolveKitsuId, invalidateKitsuMapping } from "./mapping";
 import { tryAcquire, release } from "./lock";
 import { diffAnilist, diffKitsu } from "./compare";
+import { safeErrorMessage } from "../http/errors";
 import type { MalListEntry, MediaType, SyncRunTrigger, SyncRunSummary, TargetService } from "../types";
 import type { ListEntry } from "@prisma/client";
 
@@ -137,20 +138,7 @@ async function pushToKitsu(
   return { outcome: "PUSHED" };
 }
 
-// Kitsu's JSON:API error body and AniList's GraphQL error list carry the
-// actual validation reason; the generic axios "Request failed with status
-// code N" message alone isn't enough to diagnose a per-entry push failure.
-export function extractErrorMessage(err: any): string {
-  const kitsuErrors = err?.response?.data?.errors;
-  if (Array.isArray(kitsuErrors) && kitsuErrors.length > 0) {
-    return kitsuErrors.map((e: any) => e.detail ?? e.title).filter(Boolean).join("; ");
-  }
-  const graphqlErrors = err?.response?.errors;
-  if (Array.isArray(graphqlErrors) && graphqlErrors.length > 0) {
-    return graphqlErrors.map((e: any) => e.message).filter(Boolean).join("; ");
-  }
-  return err?.message ?? String(err);
-}
+export const extractErrorMessage = safeErrorMessage;
 
 // A cached Kitsu mapping can go stale if Kitsu later merges/removes/renumbers
 // that specific entry; this JSON:API error shape (pointer at the media
@@ -287,7 +275,7 @@ export async function runSync(trigger: SyncRunTrigger): Promise<SyncRunSummary> 
     });
     return toSummary(finished);
   } catch (err: any) {
-    const message = err?.message ?? String(err);
+    const message = safeErrorMessage(err);
     const finished = await prisma.syncRun.update({
       where: { id: run.id },
       data: {

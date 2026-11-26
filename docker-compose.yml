@@ -2,11 +2,31 @@ services:
   malsync:
     build: .
     ports:
-      - "${PORT:-3000}:3000"
+      # Loopback only. A reverse proxy or Cloudflare Tunnel on this host reaches
+      # it here, or over the docker network by service name. Widen deliberately
+      # (and set TRUST_PROXY accordingly) if you need LAN access.
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
     volumes:
       - malsync-data:/app/data
     env_file: .env
+    environment:
+      # Overrides any PORT in .env so the container side always matches the
+      # port mapping and the image's healthcheck.
+      PORT: "3000"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # Entrypoint runs as root only long enough to re-own /app/data, then
+      # su-exec drops to PUID:PGID.
+      - CHOWN # chown -R on the volume
+      - DAC_OVERRIDE # root must traverse the already 700 volume owned by another uid
+      - FOWNER # chmod 700 on a volume dir not owned by root
+      - SETUID # su-exec
+      - SETGID # su-exec
+      - KILL # tini (root) forwards SIGTERM to node (non-root)
 
 volumes:
   malsync-data:

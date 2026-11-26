@@ -84,12 +84,12 @@ export default function LiveSyncLog({ runId, active }: { runId: number; active: 
   }, [entries]);
 
   return (
-    <div className="log-viewer" ref={logRef}>
+    <div className="log-viewer" ref={logRef} role="log" tabIndex={0} aria-label="Run log">
       {entries.length === 0 ? (
         <p className="muted">
           {active
-            ? "Fetching lists and resolving mappings... entries will appear here as they're processed."
-            : "This run finished before processing any entries."}
+            ? "Reading your lists. Entries appear here as they are processed."
+            : "This run did not process any entries."}
         </p>
       ) : (
         entries.map((e) => {

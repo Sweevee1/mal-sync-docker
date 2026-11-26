@@ -2,31 +2,217 @@ name: Build and push Docker image
 
 on:
   push:
+    branches: [master, security-hardening]
+  pull_request:
     branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs before npm ci so node_modules lockfiles aren't scanned as well.
+      - name: OSV scan
+        uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+        with:
+          scan-args: |-
+            --config=./osv-scanner.toml
+            --recursive
+            ./
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx prisma generate --schema backend/prisma/schema.prisma
+
+      - run: npm run build
+
+      - run: npm test -w backend
+
+      # GHSA-mrhx-c7xc-m3w5 (zod 3) is accepted until zod 4; see osv-scanner.toml.
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --json > "$RUNNER_TEMP/audit.json" || true
+          node - "$RUNNER_TEMP/audit.json" <<'EOF'
+          const fs = require("fs");
+          const ACCEPTED = new Set(["GHSA-mrhx-c7xc-m3w5"]);
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (report.error) {
+            console.error("npm audit failed:", report.error.summary || report.error.code);
+            process.exit(1);
+          }
+          const failures = [];
+          for (const [name, vuln] of Object.entries(report.vulnerabilities || {})) {
+            for (const via of vuln.via) {
+              if (typeof via === "string") continue;
+              const id = (via.url || "").split("/").pop();
+              if ((via.severity === "high" || via.severity === "critical") && !ACCEPTED.has(id)) {
+                failures.push(`${name}: ${via.severity} ${id} ${via.title}`);
+              }
+            }
+          }
+          if (failures.length) {
+            console.error("Unaccepted high/critical advisories:\n" + failures.join("\n"));
+            process.exit(1);
+          }
+          console.log("No unaccepted high/critical advisories.");
+          EOF
+
   build:
+    needs: security
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Set lowercase image name
-        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/mal-sync-docker:latest" >> $GITHUB_ENV
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/mal-sync-docker" >> "$GITHUB_ENV"
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+
+      # Attestations can't be loaded into the local daemon, so the smoke image
+      # is built without them; the push build below reuses this build's cache.
+      - name: Build image for smoke tests
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          load: true
+          push: false
+          tags: malsync:smoke
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          IMAGE=malsync:smoke
+          NAME=malsync-smoke
+          DATA=$(sudo mktemp -d)
+          # Unraid-like host dir: root-owned and world-readable on arrival.
+          sudo chown root:root "$DATA"
+          sudo chmod 755 "$DATA"
+
+          cleanup() {
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::group::container logs"
+              docker logs "$NAME" 2>&1 || true
+              echo "::endgroup::"
+            fi
+            docker rm -f "$NAME" >/dev/null 2>&1 || true
+            sudo rm -rf "$DATA"
+            exit "$rc"
+          }
+          trap cleanup EXIT
+
+          KEY=$(openssl rand -base64 32)
+          HASH=$(node -e 'const c=require("crypto");const s=c.randomBytes(16);const h=c.scryptSync("smoke-test-password",s,64,{N:16384,r:8,p:1});console.log(`scrypt:16384:8:1:${s.toString("base64url")}:${h.toString("base64url")}`)')
+          echo "::add-mask::$KEY"
+          echo "::add-mask::$HASH"
+
+          # Same hardening flags as docker-compose.yml, so a capability the
+          # entrypoint or tini needs but compose drops fails here.
+          docker run -d --name "$NAME" \
+            -p 127.0.0.1:3000:3000 \
+            -v "$DATA:/app/data" \
+            --cap-drop ALL \
+            --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+            --cap-add SETUID --cap-add SETGID --cap-add KILL \
+            --security-opt no-new-privileges:true \
+            -e ENCRYPTION_KEY="$KEY" \
+            -e ADMIN_PASSWORD_HASH="$HASH" \
+            -e PUBLIC_BASE_URL=http://localhost:3000 \
+            "$IMAGE" >/dev/null
+
+          body=""
+          for _ in $(seq 1 60); do
+            body=$(curl -fsS http://127.0.0.1:3000/api/health 2>/dev/null || true)
+            [ "$body" = '{"ok":true}' ] && break
+            [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = "true" ] || { echo "container exited early"; exit 1; }
+            sleep 1
+          done
+          [ "$body" = '{"ok":true}' ] || { echo "health endpoint never became ready"; exit 1; }
+
+          node_uid=$(docker exec "$NAME" sh -c 'for d in /proc/[0-9]*; do n=$(sed -n "s/^Name:[[:space:]]*//p" "$d/status"); [ "$n" = node ] && sed -n "s/^Uid:[[:space:]]*\([0-9]*\).*/\1/p" "$d/status" 2>/dev/null; done; true')
+          [ "$node_uid" = "99" ] || { echo "node runs as uid '$node_uid', expected 99"; exit 1; }
+
+          owner=$(stat -c '%u:%g %a' "$DATA")
+          [ "$owner" = "99:100 700" ] || { echo "data dir is '$owner', expected '99:100 700'"; exit 1; }
+
+          for path in /api/entries /api/status; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$path")
+            [ "$code" = "401" ] || { echo "$path returned $code unauthenticated, expected 401"; exit 1; }
+          done
+
+          db_owner=$(sudo stat -c '%u:%g' "$DATA/malsync.db")
+          [ "$db_owner" = "99:100" ] || { echo "malsync.db is owned by '$db_owner'"; exit 1; }
+
+          start=$(date +%s.%N)
+          docker stop -t 10 "$NAME" >/dev/null
+          elapsed=$(awk -v s="$start" -v e="$(date +%s.%N)" 'BEGIN{printf "%.2f", e-s}')
+          echo "docker stop took ${elapsed}s"
+          awk -v t="$elapsed" 'BEGIN{exit !(t < 9)}' || { echo "stop was too slow; signals are not reaching node"; exit 1; }
+          [ "$(docker inspect -f '{{.State.ExitCode}}' "$NAME")" != "137" ] || { echo "container was SIGKILLed"; exit 1; }
+
+          leaked=$(docker run --rm --entrypoint sh "$IMAGE" -c 'find /app -path /app/node_modules -prune -o \( -name "*.db" -o -name ".env" -o -name ".env.*" \) -print 2>/dev/null')
+          [ -z "$leaked" ] || { echo "image contains secrets or databases:"; echo "$leaked"; exit 1; }
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: malsync:smoke
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        if: ${{ github.ref == 'refs/heads/master' && github.event_name == 'push' }}
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        if: ${{ github.ref == 'refs/heads/master' && github.event_name == 'push' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
-          tags: ${{ env.IMAGE }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
