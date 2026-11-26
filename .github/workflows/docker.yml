@@ -164,8 +164,9 @@ jobs:
           done
           [ "$body" = '{"ok":true}' ] || { echo "health endpoint never became ready"; exit 1; }
 
-          node_uid=$(docker exec "$NAME" sh -c 'for d in /proc/[0-9]*; do n=$(sed -n "s/^Name:[[:space:]]*//p" "$d/status"); [ "$n" = node ] && sed -n "s/^Uid:[[:space:]]*\([0-9]*\).*/\1/p" "$d/status" 2>/dev/null; done; true')
-          [ "$node_uid" = "99" ] || { echo "node runs as uid '$node_uid', expected 99"; exit 1; }
+          procs=$(docker top "$NAME" -eo uid,comm)
+          node_uid=$(echo "$procs" | awk '$2=="node"{print $1; exit}')
+          [ "$node_uid" = "99" ] || { echo "node runs as uid '$node_uid', expected 99"; echo "$procs"; exit 1; }
 
           owner=$(stat -c '%u:%g %a' "$DATA")
           [ "$owner" = "99:100 700" ] || { echo "data dir is '$owner', expected '99:100 700'"; exit 1; }
