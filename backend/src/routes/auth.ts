@@ -7,6 +7,7 @@ import * as mal from "../services/mal";
 import * as anilist from "../services/anilist";
 import * as kitsu from "../services/kitsu";
 import { parseCookies } from "../auth/session";
+import { resolveBaseUrl } from "../auth/peer";
 import { clearOAuthCookie, cookieNames, setOAuthCookie } from "../auth/cookies";
 import {
   OAuthStateError,
@@ -56,7 +57,7 @@ function startHandler(
       return res.status(403).json({ error: "Forbidden" });
     }
     try {
-      const { url, state } = await start(`${cfg.PUBLIC_BASE_URL}${path}`);
+      const { url, state } = await start(`${resolveBaseUrl(cfg, req)}${path}`);
       setOAuthCookie(cfg, res, state);
       res.redirect(url);
     } catch (err) {

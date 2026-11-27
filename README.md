@@ -10,28 +10,14 @@ A pre-built image is published to GHCR on every push to `master`: `ghcr.io/sweev
 
 ### Upgrading from an earlier version
 
-This version adds a required login. What changes for you:
+Nothing breaks. If you already set `ENCRYPTION_KEY`, `ADMIN_PASSWORD_HASH` and `PUBLIC_BASE_URL`, they keep working. On the first start of this version the app also copies the key into `encryption.key` and the password hash into its database, so you can delete those two variables afterward with no change in your password or connected services. Keep `PUBLIC_BASE_URL` if you use a tunnel or an `https://` address (see below).
 
-- The container exits at startup with a clear environment error until `ADMIN_PASSWORD_HASH` and `PUBLIC_BASE_URL` are set. Read the container log if it stops right after you update.
-- Your existing data and service connections are kept.
-- MAL and AniList redirect URIs are now built from `PUBLIC_BASE_URL`, not from the address you browse with. In your MAL and AniList developer settings, change each redirect URI to `PUBLIC_BASE_URL` plus `/api/auth/mal/callback` and `/api/auth/anilist/callback`. The **Connect Services** page shows the exact values.
-- Do not change `ENCRYPTION_KEY`. It decrypts the tokens already stored in the database, and a new key makes them unreadable.
+If you connected MAL or AniList before the login was added, their redirect URIs may still point at an old address. The **Connect Services** page shows the exact values to register.
 
 ### First install
 
-1. Generate an encryption key for stored credentials. Open Unraid's built-in web **Terminal** (the `>_` icon, top-right of any page) and run:
-   ```sh
-   openssl rand -base64 32
-   ```
-2. Generate the hash of the password you will log in with. In the same Terminal, run:
-   ```sh
-   docker run --rm -i --entrypoint node ghcr.io/sweevee1/mal-sync-docker:latest dist/tools/hashPassword.js
-   ```
-   Type your password, press Enter, then press Ctrl+D. The command prints one line starting with `scrypt:`. That line is your `ADMIN_PASSWORD_HASH`.
-
-   The password is read from stdin, so it never appears in the command line, the process list, or shell history. Your terminal still shows the characters as you type them. If you pipe it instead (`printf '%s' 'your password' | docker run --rm -i ...`), the password ends up in your shell history.
-3. In the Unraid **Docker** tab, click **Add Container**.
-4. Fill in:
+1. In the Unraid **Docker** tab, click **Add Container**.
+2. Fill in:
    | Field | Value |
    |---|---|
    | Name | `mal-sync-docker` |
@@ -39,22 +25,29 @@ This version adds a required login. What changes for you:
    | Network Type | `Bridge` for a LAN-only install, or your custom network if you use [Cloudflare Tunnel](#making-it-public-with-cloudflare-tunnel) |
    | Port | Container `3000` to Host `3000` (change the host port if 3000 is taken; the container port is fixed) |
    | Path | Container `/app/data` to Host `/mnt/user/appdata/mal-sync-docker` |
-5. Add these as **Variables**. Unraid has no `.env` file, so every required variable must be added here:
-   | Variable | Required | Value |
-   |---|---|---|
-   | `ENCRYPTION_KEY` | Yes | The key from step 1. Back it up (see [Data & backups](#data--backups)). |
-   | `ADMIN_PASSWORD_HASH` | Yes | The line printed in step 2, pasted as is. It contains colons; do not edit or quote it. |
-   | `PUBLIC_BASE_URL` | Yes | The exact URL you open in your browser, with no path and no trailing slash. LAN-only example: `http://192.168.1.50:3000`. With a tunnel: `https://malsync.example.com`. It is also used to build the MAL and AniList redirect URIs. |
-   | `TRUST_PROXY` | No, default `false` | Set `true` when the app is behind Cloudflare Tunnel or any reverse proxy (see [`TRUST_PROXY`](#trust_proxy) below). Required if `PUBLIC_BASE_URL` starts with `https://`. |
-   | `TRUST_PROXY_CIDRS` | No, but required in practice when `TRUST_PROXY=true` | Comma-separated IP addresses or subnets of the proxy container, for example `172.30.0.0/24`. The default is `loopback`, so you must name your proxy explicitly. See [Finding the proxy address](#finding-the-proxy-address). |
-   | `PUID` / `PGID` | No, default `99` / `100` | The user and group the app runs as. The defaults are Unraid's `nobody:users`. The container re-owns `/app/data` to this user at start. |
-   | `DEFAULT_SYNC_INTERVAL_MINUTES` | No, default `60` | The sync interval used on first boot. You can change it later on the Dashboard. |
 
-   There is no `PORT` variable to set. The container always listens on 3000. To use a different port on your network, change the host side of the Port mapping.
-6. Apply, then open the `PUBLIC_BASE_URL` address and log in with your password. Always open the app at exactly that address; the OAuth login flow for MAL and AniList depends on it. Go to **Connect Services** and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; all done in the UI).
-7. Click **Sync now** on the Dashboard, or wait for the scheduled interval.
+   That is all. No variables are needed for a LAN-only install.
+3. Apply, then open the container's **Logs**. It prints a line like `No admin password is set. Open the web UI and set one, using this setup code: ...`.
+4. Open the web UI (`http://<unraid-ip>:3000`). It asks for a new password (at least 12 characters) and the setup code from the log. The code proves you control the server, so a stranger who finds the port first cannot claim it. A new code is made each time the container starts until you finish this step.
+5. Go to **Connect Services** and connect MyAnimeList, AniList, and Kitsu (see [Getting Your API Credentials](#getting-your-api-credentials) below; all done in the UI).
+6. Click **Sync now** on the Dashboard, or wait for the scheduled interval.
 
-If `PUBLIC_BASE_URL` is an `http://` address, login works from loopback and private LAN addresses only (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Tailscale addresses (100.64.0.0/10) and IPv6 unique-local addresses are refused, so use an `https://` address for those. If it is an `https://` address, login is accepted over HTTPS only (see below).
+Optional variables, added in the same dialog under **Variables**:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PUBLIC_BASE_URL` | unset | The exact URL you browse to, with no path and no trailing slash, for example `https://malsync.example.com`. **Required when the app is reached through a tunnel or reverse proxy, or over `https://`.** When unset, the app trusts the address in your browser's `Host` header, but only for connections from loopback and private LAN addresses. |
+| `TRUST_PROXY` | `false` | Set `true` when the app is behind Cloudflare Tunnel or any reverse proxy (see [`TRUST_PROXY`](#trust_proxy) below). Required if `PUBLIC_BASE_URL` starts with `https://`. |
+| `TRUST_PROXY_CIDRS` | `loopback` | Comma-separated IP addresses or subnets of the proxy container, for example `172.30.0.0/24`. See [Finding the proxy address](#finding-the-proxy-address). |
+| `ENCRYPTION_KEY` | generated | A base64 32-byte key (`openssl rand -base64 32`). Normally leave it unset; see [Data & backups](#data--backups). |
+| `ADMIN_PASSWORD_HASH` | unset | A scrypt hash that overrides the password chosen in the UI. See [Forgot your password](#forgot-your-password). |
+| `RESET_ADMIN_PASSWORD` | `false` | `true` for one start clears the stored password. See [Forgot your password](#forgot-your-password). |
+| `PUID` / `PGID` | `99` / `100` | The user and group the app runs as. The defaults are Unraid's `nobody:users`. The container re-owns `/app/data` to this user at start. |
+| `DEFAULT_SYNC_INTERVAL_MINUTES` | `60` | The sync interval used on first boot. You can change it later on the Dashboard. |
+
+There is no `PORT` variable to set. The container always listens on 3000. To use a different port on your network, change the host side of the Port mapping.
+
+Without `PUBLIC_BASE_URL`, login and setup work from loopback and private LAN addresses only (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Tailscale addresses (100.64.0.0/10) and IPv6 unique-local addresses are refused, so set an `https://` `PUBLIC_BASE_URL` for those. With an `https://` address, login is accepted over HTTPS only (see below). Always open the app at the address you registered with MAL and AniList; the OAuth login flow depends on it.
 
 The SQLite database lives at `/mnt/user/appdata/mal-sync-docker/malsync.db` on the host, so it survives container updates and recreation.
 
@@ -95,7 +88,7 @@ Rules to keep this safe:
 
 What the app does on its side:
 
-- The password is stored only as a scrypt hash (`ADMIN_PASSWORD_HASH`).
+- The password is stored only as a scrypt hash, in the database (or in `ADMIN_PASSWORD_HASH` if you set that).
 - Sessions are stored server-side as SHA-256 hashes of the cookie token. The cookie is `HttpOnly` and `SameSite=Strict`, and is `Secure` with the `__Host-` prefix when `PUBLIC_BASE_URL` is `https://`. A session lasts at most 30 days and expires after 7 days without use.
 - After 5 failed logins from one IP within 15 minutes, further attempts from that IP get HTTP 429 until the window passes.
 - Every request that changes data needs a matching `Origin` header and a custom request header, on top of the `SameSite=Strict` cookie.
@@ -105,7 +98,19 @@ What the app does on its side:
   --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add KILL --security-opt no-new-privileges:true
   ```
 
-To change your password, generate a new hash (step 2 of the install), put it in `ADMIN_PASSWORD_HASH`, and restart the container. Every existing session is signed out on that restart.
+To change your password, use the **Password** card on the **Connect Services** page. Every other browser is signed out. If you set `ADMIN_PASSWORD_HASH`, that variable takes priority and the card is read-only; remove the variable and restart first (your current password keeps working).
+
+### Forgot your password
+
+Add the variable `RESET_ADMIN_PASSWORD=true` to the container and restart it. That start clears the stored password and every session, and the log prints a new setup code. Open the web UI, set a new password, then **remove the variable** so the next restart does not clear it again. If you set `ADMIN_PASSWORD_HASH`, remove it too, since it would otherwise still win.
+
+You can also generate a hash yourself and set it as `ADMIN_PASSWORD_HASH`. The password is read from stdin, so it never appears in the process list or shell history:
+
+```sh
+docker run --rm -i --entrypoint node ghcr.io/sweevee1/mal-sync-docker:latest dist/tools/hashPassword.js
+```
+
+Type your password, press Enter, then press Ctrl+D. It prints one line starting with `scrypt:`. Paste it as is; it contains colons, so do not edit or quote it.
 
 ## Installing anywhere else with Docker Compose
 
@@ -115,31 +120,25 @@ cd mal-sync-docker
 cp .env.example .env
 ```
 
-Generate the values for `.env`:
+Nothing in `.env` is required. Start the stack, read the setup code from `docker compose logs`, and set your password in the browser (steps 3 to 6 of the Unraid instructions above).
 
-```sh
-openssl rand -base64 32
-docker run --rm -i --entrypoint node ghcr.io/sweevee1/mal-sync-docker:latest dist/tools/hashPassword.js
-```
+Variables in `.env` (all optional):
 
-The first command prints your `ENCRYPTION_KEY`. The second reads your password from stdin (type it, press Enter, then Ctrl+D) and prints your `ADMIN_PASSWORD_HASH`.
-
-Variables in `.env`:
-
-| Variable | Required | Meaning |
+| Variable | Default | Meaning |
 |---|---|---|
-| `ENCRYPTION_KEY` | Yes | Encrypts stored tokens. Never change it after first use. |
-| `ADMIN_PASSWORD_HASH` | Yes | The scrypt hash printed above. |
-| `PUBLIC_BASE_URL` | Yes | The exact URL you browse to, no path. `.env.example` defaults to `http://localhost:3000`. |
-| `TRUST_PROXY` | No, default `false` | `true` only if a reverse proxy sits in front. |
-| `TRUST_PROXY_CIDRS` | No | Proxy IPs or subnets. Only used when `TRUST_PROXY=true`. |
-| `PUID` / `PGID` | No, default `99` / `100` | User and group the app runs as. |
-| `DEFAULT_SYNC_INTERVAL_MINUTES` | No, default `60` | Sync interval used on first boot. |
-| `HOST_PORT` | No, default `3000` | Host port that maps to the container's port 3000. Read by `docker-compose.yml` itself. |
+| `PUBLIC_BASE_URL` | unset | The exact URL you browse to, no path. Required behind a tunnel, a reverse proxy, or over `https://`. `.env.example` leaves it commented out. |
+| `TRUST_PROXY` | `false` | `true` only if a reverse proxy sits in front. |
+| `TRUST_PROXY_CIDRS` | `loopback` | Proxy IPs or subnets. Only used when `TRUST_PROXY=true`. |
+| `ENCRYPTION_KEY` | generated | Encrypts stored tokens. Normally leave it unset; never change it after first use. |
+| `ADMIN_PASSWORD_HASH` | unset | A scrypt hash that overrides the password chosen in the UI. |
+| `RESET_ADMIN_PASSWORD` | `false` | `true` for one start clears the stored password. |
+| `PUID` / `PGID` | `99` / `100` | User and group the app runs as. |
+| `DEFAULT_SYNC_INTERVAL_MINUTES` | `60` | Sync interval used on first boot. |
+| `HOST_PORT` | `3000` | Host port that maps to the container's port 3000. Read by `docker-compose.yml` itself. |
 
 Leave `DATABASE_URL` in `.env.example` as it is; it already holds the correct path inside the data volume. The `PORT` value is ignored, because the compose file forces the container port to 3000.
 
-The compose file binds the port to `127.0.0.1` only, so the app is reachable from the Docker host itself and from a reverse proxy or tunnel on that host. To reach it from other machines on your LAN, change the `ports` line in `docker-compose.yml` deliberately and set `PUBLIC_BASE_URL` to match.
+The compose file binds the port to `127.0.0.1` only, so the app is reachable from the Docker host itself and from a reverse proxy or tunnel on that host. To reach it from other machines on your LAN, change the `ports` line in `docker-compose.yml` deliberately; set `PUBLIC_BASE_URL` to match if you use a hostname or a proxy.
 
 Then start it:
 
@@ -147,13 +146,13 @@ Then start it:
 docker compose up --build
 ```
 
-Open the `PUBLIC_BASE_URL` address, log in, and continue from step 6 of the Unraid instructions above.
+Open the web UI, set your password, and continue from step 5 of the Unraid instructions above.
 
 ## Getting Your API Credentials
 
 MyAnimeList and AniList each require you to register a small OAuth app on their own site and give this app the resulting Client ID (and, for AniList, Client Secret). Both are entered on the **Connect Services** page in the UI, not `.env`, and the secret is encrypted at rest the same way tokens are.
 
-The redirect URI you register is always `PUBLIC_BASE_URL` plus the callback path. It is not taken from the address in your browser, so it must match `PUBLIC_BASE_URL` exactly.
+The redirect URI you register is the app's base address plus the callback path. With `PUBLIC_BASE_URL` set, it is always that value and never taken from your browser. Without it, the app uses the address you browse to, but only for local and private LAN connections. Either way, **Connect Services** shows the exact value to register, and it must match exactly.
 
 ### MyAnimeList
 1. Go to [myanimelist.net/apiconfig](https://myanimelist.net/apiconfig) and create a new client.
@@ -214,8 +213,8 @@ npm test -w backend    # backend test suite
 Create `backend/.env` from `.env.example`. Beyond the usual variables it needs:
 
 - `DATABASE_URL`, local and relative, for example `file:./prisma/dev.db`. If you get "Unable to open the database file", try an absolute `file:` path.
-- `ADMIN_PASSWORD_HASH`, generated with `npm run hash-password -w backend` (type your password, press Enter, then Ctrl+D).
-- `PUBLIC_BASE_URL=http://localhost:5173`, since you browse the Vite dev server. MAL and AniList redirect URIs in dev then look like `http://localhost:5173/api/auth/mal/callback`.
+- Optionally `ADMIN_PASSWORD_HASH`, generated with `npm run hash-password -w backend` (type your password, press Enter, then Ctrl+D). Without it, set a password in the browser using the setup code printed in the backend log.
+- `PUBLIC_BASE_URL=http://localhost:5173`, since you browse the Vite dev server (the Vite proxy makes requests arrive with a different Host, so set the address explicitly). MAL and AniList redirect URIs in dev then look like `http://localhost:5173/api/auth/mal/callback`.
 
 Run migrations with:
 
@@ -227,11 +226,10 @@ npm run prisma:migrate
 
 All state (credentials, cached list data, sync history, login sessions) lives in a single SQLite file at `/app/data/malsync.db` inside the container. That is the Unraid path mapping above, or the `malsync-data` Docker volume if you use `docker compose`.
 
-Back up both of these:
+The app keeps its encryption key in `encryption.key` in the same data folder (mode 600). It is generated on first start, or copied from `ENCRYPTION_KEY` if you set that variable, so removing the variable later keeps the same key.
 
-1. The data folder (`/mnt/user/appdata/mal-sync-docker` on Unraid), which holds `malsync.db`.
-2. Your `ENCRYPTION_KEY`, stored somewhere outside that folder, such as a password manager.
+Back up the whole data folder (`/mnt/user/appdata/mal-sync-docker` on Unraid): it holds `malsync.db` and `encryption.key`, and you need both. The database without the key holds tokens you cannot decrypt, so you would have to reconnect every service.
 
-You need both. The database without the key holds tokens you cannot decrypt, so you would have to reconnect every service. The key without the database restores nothing.
+The trade-off: the key now sits beside the database, so anyone who can read a backup of that folder can read your stored service tokens (and your Kitsu password, if you used password login). Keep the backups as private as the folder itself.
 
-You do not need to back up `ADMIN_PASSWORD_HASH`; you can generate a new one at any time.
+You do not need to back up a password hash; if you lose the password, see [Forgot your password](#forgot-your-password).

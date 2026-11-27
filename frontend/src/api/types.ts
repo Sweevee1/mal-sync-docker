@@ -25,7 +25,14 @@ export interface StatusResponse {
   syncIntervalMinutes: number;
   lastSync: SyncRun | null;
   isSecure: boolean;
-  oauthCallbackBase: string;
+  // Null when the server cannot work out its own address; PUBLIC_BASE_URL must be set.
+  oauthCallbackBase: string | null;
+}
+
+export interface SessionInfo {
+  authenticated: boolean;
+  setupRequired: boolean;
+  passwordManagedByEnv?: boolean;
 }
 
 export interface SyncRun {
