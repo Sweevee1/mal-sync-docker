@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { StatusResponse } from "../api/types";
 import ServiceIcon from "../components/ServiceIcon";
+import ChangePassword from "../components/ChangePassword";
 
 const PASSWORD_PLACEHOLDER = "<your password>";
 const USERNAME_PLACEHOLDER = "<your username>";
@@ -211,8 +212,10 @@ export default function Onboarding() {
   }
 
   const isSecure = status.isSecure;
-  const malCallback = `${status.oauthCallbackBase}/api/auth/mal/callback`;
-  const anilistCallback = `${status.oauthCallbackBase}/api/auth/anilist/callback`;
+  const NEEDS_BASE_URL = "Set the PUBLIC_BASE_URL variable to the address you browse to, then restart.";
+  const base = status.oauthCallbackBase;
+  const malCallback = base ? `${base}/api/auth/mal/callback` : NEEDS_BASE_URL;
+  const anilistCallback = base ? `${base}/api/auth/anilist/callback` : NEEDS_BASE_URL;
   const curlReady = kitsuCliUsername.trim() !== "" && kitsuCliPassword !== "";
 
   return (
@@ -239,7 +242,7 @@ export default function Onboarding() {
         <p className="field-label">App Description</p>
         <pre className="code-block">{MAL_APP_DESCRIPTION}</pre>
         <p className="field-label">Homepage URL</p>
-        <pre className="code-block">{status.oauthCallbackBase}</pre>
+        <pre className="code-block">{base ?? NEEDS_BASE_URL}</pre>
         {status.services.mal.clientConfigured ? (
           <>
             <p className="muted">A Client ID is saved.</p>
@@ -526,6 +529,8 @@ export default function Onboarding() {
           </div>
         )}
       </section>
+
+      <ChangePassword />
     </div>
   );
 }

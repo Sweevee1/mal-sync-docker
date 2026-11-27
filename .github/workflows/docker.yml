@@ -187,8 +187,71 @@ jobs:
           awk -v t="$elapsed" 'BEGIN{exit !(t < 9)}' || { echo "stop was too slow; signals are not reaching node"; exit 1; }
           [ "$(docker inspect -f '{{.State.ExitCode}}' "$NAME")" != "137" ] || { echo "container was SIGKILLed"; exit 1; }
 
-          leaked=$(docker run --rm --entrypoint sh "$IMAGE" -c 'find /app -path /app/node_modules -prune -o \( -name "*.db" -o -name ".env" -o -name ".env.*" \) -print 2>/dev/null')
+          leaked=$(docker run --rm --entrypoint sh "$IMAGE" -c 'find /app -path /app/node_modules -prune -o \( -name "*.db" -o -name ".env" -o -name ".env.*" -o -name "encryption.key" \) -print 2>/dev/null')
           [ -z "$leaked" ] || { echo "image contains secrets or databases:"; echo "$leaked"; exit 1; }
+
+      # The zero-variable path: no key, no password hash, no public URL. The app
+      # must generate its own key and come up in setup mode, with data routes closed.
+      - name: Smoke test without secrets
+        run: |
+          set -euo pipefail
+          IMAGE=malsync:smoke
+          NAME=malsync-smoke-nosecrets
+          DATA=$(sudo mktemp -d)
+          sudo chown root:root "$DATA"
+          sudo chmod 755 "$DATA"
+
+          cleanup() {
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::group::container logs"
+              docker logs "$NAME" 2>&1 || true
+              echo "::endgroup::"
+            fi
+            docker rm -f "$NAME" >/dev/null 2>&1 || true
+            sudo rm -rf "$DATA"
+            exit "$rc"
+          }
+          trap cleanup EXIT
+
+          docker run -d --name "$NAME" \
+            -p 127.0.0.1:3000:3000 \
+            -v "$DATA:/app/data" \
+            --cap-drop ALL \
+            --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+            --cap-add SETUID --cap-add SETGID --cap-add KILL \
+            --security-opt no-new-privileges:true \
+            "$IMAGE" >/dev/null
+
+          body=""
+          for _ in $(seq 1 60); do
+            body=$(curl -fsS http://127.0.0.1:3000/api/health 2>/dev/null || true)
+            [ "$body" = '{"ok":true}' ] && break
+            [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = "true" ] || { echo "container exited early"; exit 1; }
+            sleep 1
+          done
+          [ "$body" = '{"ok":true}' ] || { echo "health endpoint never became ready"; exit 1; }
+
+          code=$(curl -s -o /tmp/session.json -w '%{http_code}' http://127.0.0.1:3000/api/session)
+          [ "$code" = "401" ] || { echo "/api/session returned $code, expected 401"; exit 1; }
+          grep -q '"setupRequired":true' /tmp/session.json || { echo "setupRequired missing:"; cat /tmp/session.json; exit 1; }
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/entries)
+          [ "$code" = "401" ] || { echo "/api/entries returned $code unauthenticated, expected 401"; exit 1; }
+
+          # A wrong setup code must not claim the install.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/api/session/setup \
+            -H 'Content-Type: application/json' -H 'Origin: http://127.0.0.1:3000' -H 'X-MSD-Request: 1' \
+            -d '{"password":"a long enough password","setupCode":"wrong"}')
+          [ "$code" = "401" ] || { echo "setup with a wrong code returned $code, expected 401"; exit 1; }
+
+          docker logs "$NAME" 2>&1 | grep -q "using this setup code:" || { echo "setup code was not logged"; exit 1; }
+
+          owner=$(stat -c '%u:%g %a' "$DATA")
+          [ "$owner" = "99:100 700" ] || { echo "data dir is '$owner', expected '99:100 700'"; exit 1; }
+
+          keyfile=$(sudo stat -c '%u:%g %a' "$DATA/encryption.key")
+          [ "$keyfile" = "99:100 600" ] || { echo "encryption.key is '$keyfile', expected '99:100 600'"; exit 1; }
 
       - name: Trivy scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

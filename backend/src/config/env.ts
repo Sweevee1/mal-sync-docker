@@ -1,6 +1,7 @@
 import { z } from "zod";
 import dotenv from "dotenv";
 import { isValidScryptHash } from "../auth/password";
+import { dataDirFromDatabaseUrl, isValidKey, resolveEncryptionKey } from "./encryptionKey";
 
 dotenv.config();
 
@@ -9,16 +10,15 @@ const HASH_HELP =
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
+  // Optional: when unset a key is generated and kept in <data dir>/encryption.key.
   ENCRYPTION_KEY: z
     .string()
-    .min(1, "ENCRYPTION_KEY is required (generate with: openssl rand -base64 32)")
-    .refine((val) => {
-      try {
-        return Buffer.from(val, "base64").length === 32;
-      } catch {
-        return false;
-      }
-    }, "ENCRYPTION_KEY must be a base64-encoded 32-byte key (generate with: openssl rand -base64 32)"),
+    .optional()
+    .transform((v) => (v?.trim() ? v.trim() : undefined))
+    .refine(
+      (val) => val === undefined || isValidKey(val),
+      "ENCRYPTION_KEY must be a base64-encoded 32-byte key (generate with: openssl rand -base64 32)"
+    ),
   // MAL/AniList OAuth client id+secret are entered via the Connect Services UI
   // and stored in ServiceCredential, not configured here; see routes/auth.ts.
   DEFAULT_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
@@ -44,16 +44,29 @@ const envSchema = z.object({
         .map((s) => s.trim())
         .filter(Boolean)
     ),
+  // Optional: when unset the owner picks a password on first visit (setup mode).
   // The runtime image has no npm, so the error points at the compiled tool.
   ADMIN_PASSWORD_HASH: z
     .string()
-    .min(1, `ADMIN_PASSWORD_HASH is required. ${HASH_HELP}`)
-    .refine(isValidScryptHash, `ADMIN_PASSWORD_HASH must look like scrypt:N:r:p:<salt>:<hash>. ${HASH_HELP}`),
-  // Used verbatim to build OAuth redirect URIs instead of trusting the Host header.
+    .optional()
+    .transform((v) => (v?.trim() ? v.trim() : undefined))
+    .refine(
+      (val) => val === undefined || isValidScryptHash(val),
+      `ADMIN_PASSWORD_HASH must look like scrypt:N:r:p:<salt>:<hash>. ${HASH_HELP}`
+    ),
+  // One boot only: clears the stored password and returns to setup mode.
+  RESET_ADMIN_PASSWORD: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((v) => v === "true"),
+  // When set, used verbatim to build OAuth redirect URIs and cookie settings.
+  // When unset ("LAN mode") see auth/peer.ts resolveBaseUrl.
   PUBLIC_BASE_URL: z
     .string()
-    .min(1, "PUBLIC_BASE_URL is required (e.g. https://malsync.example.com)")
+    .optional()
     .transform((v, ctx) => {
+      if (!v?.trim()) return undefined;
       try {
         const u = new URL(v.trim());
         if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("protocol");
@@ -65,9 +78,11 @@ const envSchema = z.object({
     }),
 });
 
-export type Config = z.infer<typeof envSchema>;
+export type Config = Omit<z.infer<typeof envSchema>, "ENCRYPTION_KEY"> & { ENCRYPTION_KEY: string };
 
-function loadConfig() {
+export const keyWarnings: string[] = [];
+
+function loadConfig(): Config {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
     const issues = parsed.error.issues
@@ -77,20 +92,34 @@ function loadConfig() {
     console.error(`Invalid environment configuration:\n${issues}`);
     process.exit(1);
   }
-  return parsed.data;
+  try {
+    const resolved = resolveEncryptionKey(parsed.data.ENCRYPTION_KEY, dataDirFromDatabaseUrl(parsed.data.DATABASE_URL));
+    keyWarnings.push(...resolved.warnings);
+    return { ...parsed.data, ENCRYPTION_KEY: resolved.key };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Encryption key unavailable: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
 }
 
 export const config = loadConfig();
 
 export function isHttpsBase(cfg: Pick<Config, "PUBLIC_BASE_URL">): boolean {
-  return cfg.PUBLIC_BASE_URL.startsWith("https:");
+  return cfg.PUBLIC_BASE_URL?.startsWith("https:") ?? false;
 }
 
 export function startupWarnings(cfg: Pick<Config, "PUBLIC_BASE_URL" | "TRUST_PROXY">): string[] {
+  const warnings = [...keyWarnings];
   if (isHttpsBase(cfg) && !cfg.TRUST_PROXY) {
-    return [
-      "PUBLIC_BASE_URL is https but TRUST_PROXY is false. Logins will be rejected until TRUST_PROXY=true and TRUST_PROXY_CIDRS names your reverse proxy.",
-    ];
+    warnings.push(
+      "PUBLIC_BASE_URL is https but TRUST_PROXY is false. Logins will be rejected until TRUST_PROXY=true and TRUST_PROXY_CIDRS names your reverse proxy."
+    );
   }
-  return [];
+  if (cfg.TRUST_PROXY && !cfg.PUBLIC_BASE_URL) {
+    warnings.push(
+      "TRUST_PROXY is true but PUBLIC_BASE_URL is not set. Behind a proxy or tunnel, set PUBLIC_BASE_URL so OAuth redirect URIs and cookies use your public address."
+    );
+  }
+  return warnings;
 }

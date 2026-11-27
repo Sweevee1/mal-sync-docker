@@ -1,6 +1,5 @@
-import crypto from "node:crypto";
+import { hashPassword } from "../auth/password";
 
-// N=16384, r=8, p=1 with a 64-byte key matches what auth/password.ts verifies.
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
@@ -13,12 +12,7 @@ async function main() {
     console.error("No password received on stdin.");
     process.exit(1);
   }
-  const N = 16384;
-  const r = 8;
-  const p = 1;
-  const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(password, salt, 64, { N, r, p });
-  console.log(`scrypt:${N}:${r}:${p}:${salt.toString("base64url")}:${hash.toString("base64url")}`);
+  console.log(await hashPassword(password));
 }
 
 main();

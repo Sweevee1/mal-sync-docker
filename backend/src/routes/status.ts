@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../db/client";
 import { isSyncRunning } from "../sync/engine";
 import { config } from "../config/env";
+import { tryResolveBaseUrl } from "../auth/peer";
 import { wrap } from "../http/asyncHandler";
 import { getLastAuthError } from "../auth/oauthState";
 
@@ -36,8 +37,8 @@ statusRouter.get(
       lastSync: latestRun,
       isSecure: req.secure,
       // Shown in the UI so the user knows exactly what redirect URI to register
-      // with MAL/AniList; fixed by config, never derived from the request.
-      oauthCallbackBase: config.PUBLIC_BASE_URL,
+      // with MAL/AniList. Null means PUBLIC_BASE_URL must be set (see auth/peer.ts).
+      oauthCallbackBase: tryResolveBaseUrl(config, req),
     });
   })
 );

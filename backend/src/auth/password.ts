@@ -50,3 +50,13 @@ export async function verifyPassword(password: string, stored: string): Promise<
   });
   return crypto.timingSafeEqual(derived, hash);
 }
+
+// N=16384, r=8, p=1 with a 64-byte key; verifyPassword reads the parameters back from the string.
+export async function hashPassword(password: string): Promise<string> {
+  const N = 16384;
+  const r = 8;
+  const p = 1;
+  const salt = crypto.randomBytes(16);
+  const hash = await scrypt(password, salt, 64, { N, r, p, maxmem: 256 * N * r + 1024 * 1024 });
+  return `scrypt:${N}:${r}:${p}:${salt.toString("base64url")}:${hash.toString("base64url")}`;
+}

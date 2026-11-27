@@ -122,6 +122,8 @@ model AppSetting {
   lastFullSyncAt      DateTime?
   // sha256 of ADMIN_PASSWORD_HASH; a change invalidates all sessions at startup.
   adminHashFingerprint String?
+  // Password chosen in the UI (setup mode). ADMIN_PASSWORD_HASH wins when set and is mirrored here.
+  adminPasswordHash    String?
 }
 
 // Owner login sessions. Only the sha256 of the cookie token is stored.

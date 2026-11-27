@@ -8,7 +8,9 @@ services:
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
     volumes:
       - malsync-data:/app/data
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       # Overrides any PORT in .env so the container side always matches the
       # port mapping and the image's healthcheck.

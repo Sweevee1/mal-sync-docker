@@ -1,4 +1,4 @@
-import type { ListEntry, StatusResponse, SyncRun, SyncRunEntry } from "./types";
+import type { ListEntry, SessionInfo, StatusResponse, SyncRun, SyncRunEntry } from "./types";
 
 export const UNAUTHORIZED_EVENT = "msd:unauthorized";
 
@@ -6,7 +6,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public retryAfterSeconds?: number
+    public retryAfterSeconds?: number,
+    public body?: unknown
   ) {
     super(message);
     this.name = "ApiError";
@@ -33,7 +34,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(
       res.status,
       body.error ?? `The server returned an error (HTTP ${res.status}).`,
-      Number.isFinite(retryAfter) ? retryAfter : undefined
+      Number.isFinite(retryAfter) ? retryAfter : undefined,
+      body
     );
   }
   if (res.status === 204 || res.status === 202) return undefined as T;
@@ -41,15 +43,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  getSession: async (): Promise<boolean> => {
+  getSession: async (): Promise<SessionInfo> => {
     try {
-      await request<{ authenticated: boolean }>("/session");
-      return true;
+      return await request<SessionInfo>("/session");
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) return false;
+      if (err instanceof ApiError && err.status === 401) {
+        const body = (err.body ?? {}) as Partial<SessionInfo>;
+        return { authenticated: false, setupRequired: body.setupRequired === true };
+      }
       throw err;
     }
   },
+  setupPassword: (password: string, setupCode: string) =>
+    request<{ authenticated: true }>("/session/setup", { method: "POST", body: JSON.stringify({ password, setupCode }) }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true }>("/session/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }),
   login: (password: string) =>
     request<{ authenticated: true }>("/session/login", { method: "POST", body: JSON.stringify({ password }) }),
   logout: () => request<{ ok: true }>("/session/logout", { method: "POST" }),

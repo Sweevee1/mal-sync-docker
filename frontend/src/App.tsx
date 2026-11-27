@@ -6,8 +6,9 @@ import Library from "./pages/Library";
 import SyncHistory from "./pages/SyncHistory";
 import Onboarding from "./pages/Onboarding";
 import Login from "./pages/Login";
+import Setup from "./pages/Setup";
 
-type AuthState = "checking" | "authed" | "anon" | "unreachable";
+type AuthState = "checking" | "authed" | "anon" | "setup" | "unreachable";
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>("checking");
@@ -24,7 +25,8 @@ export default function App() {
   const checkSession = useCallback(async () => {
     setAuth("checking");
     try {
-      setAuth((await api.getSession()) ? "authed" : "anon");
+      const session = await api.getSession();
+      setAuth(session.authenticated ? "authed" : session.setupRequired ? "setup" : "anon");
     } catch {
       setAuth("unreachable");
     }
@@ -74,6 +76,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (auth === "setup") {
+    return <Setup onSuccess={() => setAuth("authed")} />;
   }
 
   if (auth === "anon") {
