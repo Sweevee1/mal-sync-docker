@@ -13,3 +13,4 @@ dist
 .gitignore
 .claude
 *.md
+private-docs
