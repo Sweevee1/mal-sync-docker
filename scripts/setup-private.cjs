@@ -66,8 +66,11 @@ function main() {
   // Raw configured URL (NOT `remote get-url`, which applies insteadOf rewrites and could leak tokens
   // into the sidecar config). Works for https://github.com/o/r(.git) and git@github.com:o/r(.git).
   const origin = (git(['config', '--get', 'remote.origin.url']).stdout || '').trim();
-  if (!/github\.com[/:]/.test(origin)) return skip('origin is not a github.com remote');
-  const privateUrl = origin.replace(/(\.git)?\/?$/, '-Private-Docs.git');
+  // Only ever act for the maintainer's own repositories, matched EXACTLY (never a look-alike host or path).
+  const m = origin.replace(/\/+$/, '').replace(/\.git$/, '').match(
+    /^(?:https:\/\/(?:[A-Za-z0-9._~%-]+(?::[^/@]*)?@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)Sweevee1\/([A-Za-z0-9._-]+)$/);
+  if (!m || /-Private-Docs$/.test(m[1])) return skip('origin is not one of the maintainer\'s github.com repositories');
+  const privateUrl = `https://github.com/Sweevee1/${m[1]}-Private-Docs.git`;
 
   // Can this machine's GitHub login read it? If not, this is simply not the maintainer: stay silent.
   if (git(['ls-remote', '--exit-code', privateUrl, 'HEAD']).status !== 0) return skip('private docs repo not readable with this login');
